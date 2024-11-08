@@ -1,0 +1,12 @@
+chromadb==0.5.18
+httptools==0.6.4
+langchain==0.3.7
+paper-qa==5.3.2
+pip-chill==1.0.3
+pypdf2==3.0.1
+streamlit==1.40.0
+uvloop==0.21.0
+watchfiles==0.24.0
+websockets==13.1
+pydantic==2.9.2
+openai==1.46.1
