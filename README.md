@@ -6,7 +6,7 @@ A RAG (Retrieval-Augmented Generation) application for processing and querying r
 
 ```bash
 # Clone the repository
-git clone https://github.com/ahmurill0217/PAPER_QA.git
+git clone https://github.com/ahmurill0217/paper_qa.git
 cd PAPER_QA
 
 # Create and activate virtual environment
@@ -47,22 +47,24 @@ streamlit run app.py
    - View processing status and results in real-time
 
 ## Project Structure
-
 ```
 PAPER_QA/
-│
+├── data/
+│   ├── processed/
+│   └── RAW/
 ├── src/
 │   ├── __init__.py
 │   ├── document_processor.py
-│   └── main.py
-│
-├── data/
-│   ├── raw/              # Store your PDF files here
-│   └── processed/        # Processed outputs
-│
-├── app.py               # Streamlit web interface
-├── .env                 # Environment variables
+│   └── main.py          # CLI interface
+├── tests/
+│   ├── __init__.py
+│   └── test_document_processor.py
+├── .env
 ├── .gitignore
+├── .python-version      # Specifies Python 3.11.8 for pyenv
+├── app.py              # Streamlit interface
+├── config.py           # Configuration settings
+├── README.md
 └── requirements.txt
 ```
 

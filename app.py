@@ -99,11 +99,6 @@ def main():
         3. Enter your question in the text box above
         4. Get AI-powered answers based on your documents
         
-        ### Features
-        - Process multiple PDF documents
-        - Natural language querying
-        - AI-powered document analysis
-        - Interactive interface
         """)
 
 if __name__ == "__main__":
