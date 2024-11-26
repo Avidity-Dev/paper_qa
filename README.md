@@ -6,8 +6,8 @@ A RAG (Retrieval-Augmented Generation) application for processing and querying r
 
 ```bash
 # Clone the repository
-git clone https://github.com/ahmurill0217/paper_qa.git
-cd PAPER_QA
+git clone https://github.com/Avidity-Dev/paper_qa.git [target_path] # optional
+cd [target_path]/paper_qa # or `paper_qa` if you did not specify a target path
 
 # Create and activate virtual environment
 python -m venv venv
