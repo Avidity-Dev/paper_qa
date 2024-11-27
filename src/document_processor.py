@@ -7,7 +7,7 @@ import warnings
 import logging
 
 # Configure logging to suppress paper-qa's API-related messages
-logging.getLogger('paper_qa').setLevel(logging.ERROR)  # Changed from paperqa to paper_qa
+logging.getLogger('paper_qa').setLevel(logging.ERROR)  
 
 class DocumentMetadata(BaseModel):
     """Data model for document metadata."""

@@ -1,7 +1,7 @@
 import os
 from typing import List
 from dotenv import load_dotenv
-from .document_processor import DocumentProcessor
+from document_processor import DocumentProcessor
 import warnings
 
 def load_environment_variables(env_file: str = '.env') -> None:
