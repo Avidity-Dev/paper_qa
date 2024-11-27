@@ -1,0 +1,4 @@
+local:
+  default_embedding_model: "openai-small"
+  default_llm_model: "gpt-4o"
+  vector_db_port: 6379
