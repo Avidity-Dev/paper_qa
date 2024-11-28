@@ -10,6 +10,11 @@ import os
 from functools import lru_cache
 
 
+# Set defaults for local dev but could change during deployment
+VEC_IDX_NAME = os.getenv("REDIS_INDEX_NAME", "idx:docs")
+VEC_IDX_PREFIX = os.getenv("REDIS_INDEX_PREFIX", "docs:")
+
+
 class Environment(Enum):
     LOCAL = "local"
     STAGING = "staging"
