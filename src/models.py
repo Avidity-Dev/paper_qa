@@ -18,5 +18,5 @@ class Document:
     authors: list[str]
     published_date: datetime
     created_at: datetime
-    vector_key: str
-    relational_key: str
+    vector_db_key: str
+    relational_db_key: str

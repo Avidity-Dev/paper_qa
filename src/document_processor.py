@@ -1,9 +1,12 @@
 import sys
-from typing import List, Optional
+from typing import List, Optional, Union
 import os
 
 from dotenv import load_dotenv
-from paperqa import Docs, Settings, LLMModel
+from langchain_community.vectorstores import VectorStore as LCVectorStore
+import paperqa as pqa
+from paperqa.llms import VectorStore as PQAVectorStore
+from paperqa.readers import read_doc as pqa_read_doc
 from pydantic import BaseModel
 from datetime import datetime
 import warnings
@@ -41,22 +44,45 @@ class DocumentMetadata(BaseModel):
     processed_date: datetime = datetime.now()
 
 
-class DocumentProcessor:
-    """Handles document processing and querying."""
+class PQAMetadataExtractor:
+    """
+    A preprocessor class responsible for extracting metadata from a document during the
+    embedding process.
+    """
 
-    def __init__(self):
+    pass
+
+
+class PQADocumentProcessor:
+    """
+    Handles document processing, utilizing core paper-qa functionality which itself
+    is a wrapper around LiteLLM, among other libraries.).
+
+    Attributes:
+    -----------
+    pqa_settings: pqa.Settings
+        Paper-qa settings object used to configure processing behavior.
+    vector_db: Union[LCVectorStore, PQAVectorStore]
+        Vector database to store document embeddings
+    """
+
+    def __init__(
+        self,
+        pqa_settings: pqa.Settings,
+        vector_db: Union[LCVectorStore, PQAVectorStore],
+    ):
         """Initialize the document processor."""
         # Suppress warnings about missing APIs
         warnings.filterwarnings("ignore", message=".*API.*")
         warnings.filterwarnings("ignore", message=".*Provider.*")
-        self.settings = Settings(
+        self.settings = pqa.Settings(
             llm="claude-3-5-sonnet-20240620",
             summary_llm="claude-3-5-sonnet-20240620",
             llm_config=local_llm_config,
             summary_llm_config=local_llm_config,
         )
         # Initialize Docs
-        self.docs = Docs()
+        self.docs = pqa.Docs()
         self.document_metadata: List[DocumentMetadata] = []
 
     def process_document(self, filepath: str) -> Optional[DocumentMetadata]:
@@ -69,6 +95,7 @@ class DocumentProcessor:
         Returns:
             Optional[DocumentMetadata]: Document metadata if successful
         """
+
         try:
             # Add document to paper-qa Docs
             with warnings.catch_warnings():
