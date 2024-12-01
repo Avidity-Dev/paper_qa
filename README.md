@@ -1,86 +1,47 @@
-# PAPER_QA RAG
+# Svelte + TS + Vite
 
-A RAG (Retrieval-Augmented Generation) application for processing and querying research papers.
+This template should help get you started developing with Svelte and TypeScript in Vite.
 
-## Installation
+## Recommended IDE Setup
 
-```bash
-# Clone the repository
-git clone https://github.com/Avidity-Dev/paper_qa.git [target_path] # optional
-cd [target_path]/paper_qa # or `paper_qa` if you did not specify a target path
+[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode).
 
-# Create and activate virtual environment
-python -m venv venv
-source venv/bin/activate  # or `venv\Scripts\activate` on Windows
+## Need an official Svelte framework?
 
-# Install the requirements
-pip install -r requirements.txt
+Check out [SvelteKit](https://github.com/sveltejs/kit#readme), which is also powered by Vite. Deploy anywhere with its serverless-first approach and adapt to various platforms, with out of the box support for TypeScript, SCSS, and Less, and easily-added support for mdsvex, GraphQL, PostCSS, Tailwind CSS, and more.
+
+## Technical considerations
+
+**Why use this over SvelteKit?**
+
+- It brings its own routing solution which might not be preferable for some users.
+- It is first and foremost a framework that just happens to use Vite under the hood, not a Vite app.
+
+This template contains as little as possible to get started with Vite + TypeScript + Svelte, while taking into account the developer experience with regards to HMR and intellisense. It demonstrates capabilities on par with the other `create-vite` templates and is a good starting point for beginners dipping their toes into a Vite + Svelte project.
+
+Should you later need the extended capabilities and extensibility provided by SvelteKit, the template has been structured similarly to SvelteKit so that it is easy to migrate.
+
+**Why `global.d.ts` instead of `compilerOptions.types` inside `jsconfig.json` or `tsconfig.json`?**
+
+Setting `compilerOptions.types` shuts out all other types not explicitly listed in the configuration. Using triple-slash references keeps the default TypeScript setting of accepting type information from the entire workspace, while also adding `svelte` and `vite/client` type information.
+
+**Why include `.vscode/extensions.json`?**
+
+Other templates indirectly recommend extensions via the README, but this file allows VS Code to prompt the user to install the recommended extension upon opening the project.
+
+**Why enable `allowJs` in the TS template?**
+
+While `allowJs: false` would indeed prevent the use of `.js` files in the project, it does not prevent the use of JavaScript syntax in `.svelte` files. In addition, it would force `checkJs: false`, bringing the worst of both worlds: not being able to guarantee the entire codebase is TypeScript, and also having worse typechecking for the existing JavaScript. In addition, there are valid use cases in which a mixed codebase may be relevant.
+
+**Why is HMR not preserving my local component state?**
+
+HMR state preservation comes with a number of gotchas! It has been disabled by default in both `svelte-hmr` and `@sveltejs/vite-plugin-svelte` due to its often surprising behavior. You can read the details [here](https://github.com/rixo/svelte-hmr#svelte-hmr).
+
+If you have state that's important to retain within a component, consider creating an external store which would not be replaced by HMR.
+
+```ts
+// store.ts
+// An extremely simple external store
+import { writable } from 'svelte/store'
+export default writable(0)
 ```
-
-## Usage
-
-### 1. Environment Setup
-Create a `.env` file with your OpenAI API key:
-```
-OPENAI_API_KEY=your_openai_api_key_here
-```
-
-### 2. Choose Your Interface
-
-#### Command Line Interface
-1. Add your PDF files to the `data/raw` directory
-2. Run the application:
-```bash
-python -m src.main
-```
-3. Follow the interactive prompts to query your documents
-
-#### Streamlit Web Interface
-1. Run the Streamlit app:
-```bash
-streamlit run app.py
-```
-2. Use the web interface to:
-   - Upload PDF documents directly through the browser
-   - Process documents with a single click
-   - Query your documents using the interactive interface
-   - View processing status and results in real-time
-
-## Project Structure
-```
-PAPER_QA/
-├── data/
-│   ├── processed/
-│   └── RAW/
-├── src/
-│   ├── __init__.py
-│   ├── document_processor.py
-│   └── main.py          # CLI interface
-├── tests/
-│   ├── __init__.py
-│   └── test_document_processor.py
-├── .env
-├── .gitignore
-├── .python-version      # Specifies Python 3.11.8 for pyenv
-├── app.py              # Streamlit interface
-├── config.py           # Configuration settings
-├── README.md
-└── requirements.txt
-```
-
-## Features
-
-- Process multiple PDF documents
-- Query documents using natural language
-- Interactive question-answering interface
-- LLM-powered document analysis
-- Two interface options:
-  - Command-line interface for direct file processing
-  - Web interface for interactive document management
-
-## Notes
-
-- The application requires an OpenAI API key to function
-- For CLI usage: Place your research papers in PDF format in the `data/raw` directory
-- For Web usage: Upload PDFs directly through the Streamlit interface
-- The application will process all provided PDF files

@@ -81,9 +81,7 @@ class PQADocumentProcessor:
             llm_config=local_llm_config,
             summary_llm_config=local_llm_config,
         )
-        # Initialize Docs
-        self.docs = pqa.Docs()
-        self.document_metadata: List[DocumentMetadata] = []
+        # TODO: Check vector store connection
 
     def process_document(self, filepath: str) -> Optional[DocumentMetadata]:
         """

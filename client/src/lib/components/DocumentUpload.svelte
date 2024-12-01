@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
-  
+  import { createEventDispatcher } from "svelte";
+
   const dispatch = createEventDispatcher();
   let files: FileList | null = null;
-  let uploadStatus: string = '';
+  let uploadStatus: string = "";
   let isUploading: boolean = false;
   let isProcessing: boolean = false;
 
@@ -17,21 +17,26 @@
 
   async function handleUpload() {
     if (!files || files.length === 0) {
-      uploadStatus = 'Please select at least one file';
+      uploadStatus = "Please select at least one file";
       return;
     }
 
     isUploading = true;
-    uploadStatus = 'Uploading files...';
+    uploadStatus = "Uploading files...";
+
+    const formData = new FormData();
+    for (let i = 0; i < files.length; i++) {
+      formData.append("docs", files[i]);
+    }
 
     try {
       // Simulate upload for now - will be replaced with actual API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      uploadStatus = 'Files uploaded successfully!';
-      dispatch('uploadComplete', { files });
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      uploadStatus = "Files uploaded successfully!";
+      dispatch("uploadComplete", { files });
     } catch (error) {
-      uploadStatus = 'Error uploading files';
-      console.error('Upload error:', error);
+      uploadStatus = "Error uploading files";
+      console.error("Upload error:", error);
     } finally {
       isUploading = false;
     }
@@ -39,21 +44,21 @@
 
   async function processDocuments() {
     if (!files || files.length === 0) {
-      uploadStatus = 'No files to process';
+      uploadStatus = "No files to process";
       return;
     }
 
     isProcessing = true;
-    uploadStatus = 'Processing documents...';
+    uploadStatus = "Processing documents...";
 
     try {
       // Simulate processing - will be replaced with actual API call
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      uploadStatus = 'Documents processed successfully!';
-      dispatch('processComplete');
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      uploadStatus = "Documents processed successfully!";
+      dispatch("processComplete");
     } catch (error) {
-      uploadStatus = 'Error processing documents';
-      console.error('Processing error:', error);
+      uploadStatus = "Error processing documents";
+      console.error("Processing error:", error);
     } finally {
       isProcessing = false;
     }
@@ -62,7 +67,7 @@
 
 <div class="upload-container">
   <h2>Document Upload</h2>
-  
+
   <div class="upload-box">
     <input
       type="file"
@@ -72,9 +77,7 @@
       on:change={handleFileSelect}
       disabled={isUploading || isProcessing}
     />
-    <label for="fileInput" class="file-label">
-      Choose Files
-    </label>
+    <label for="fileInput" class="file-label"> Choose Files </label>
   </div>
 
   {#if uploadStatus}
@@ -87,7 +90,7 @@
       disabled={!files || isUploading || isProcessing}
       class="upload-button"
     >
-      {isUploading ? 'Uploading...' : 'Upload Files'}
+      {isUploading ? "Uploading..." : "Upload Files"}
     </button>
 
     <button
@@ -95,7 +98,7 @@
       disabled={!files || isUploading || isProcessing}
       class="process-button"
     >
-      {isProcessing ? 'Processing...' : 'Process Documents'}
+      {isProcessing ? "Processing..." : "Process Documents"}
     </button>
   </div>
 </div>

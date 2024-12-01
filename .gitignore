@@ -1,20 +1,12 @@
 # Python
+*.pyc
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
+*.pyo
+*.pyd
+.env
+venv/
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
 wheels/
 *.egg-info/
 .installed.cfg
@@ -23,8 +15,6 @@ wheels/
 # Virtual Environment
 .env
 .venv
-venv/
-ENV/
 .streamlit/secrets.toml
 
 # IDE
@@ -32,7 +22,6 @@ ENV/
 .vscode/
 *.swp
 *.swo
-.DS_Store
 
 # Project specific
 data/raw/*
@@ -46,3 +35,29 @@ data/processed/*
 # Logs
 *.log
 logs/
+
+# JavaScript/Typescript, Svelte
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
