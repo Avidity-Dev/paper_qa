@@ -17,7 +17,7 @@ import pymupdf
 logger = logging.getLogger(__name__)
 
 
-class CloudStorageAdapter(ABC):
+class CloudObjectStore(ABC):
     """Abstract base class for cloud storage providers."""
 
     @abstractmethod
@@ -75,7 +75,7 @@ class CloudStorageAdapter(ABC):
         pass
 
 
-class AWSS3Adapter(CloudStorageAdapter):
+class AWSS3Adapter(CloudObjectStore):
     """AWS S3 implementation of cloud storage adapter."""
 
     def __init__(
@@ -220,7 +220,7 @@ class CloudStorageFactory:
     @staticmethod
     def create_storage_adapter(
         provider: str, config: Dict[str, Any]
-    ) -> CloudStorageAdapter:
+    ) -> CloudObjectStore:
         """Create a cloud storage adapter instance."""
         if provider == "aws":
             return AWSS3Adapter(
