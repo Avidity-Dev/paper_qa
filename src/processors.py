@@ -24,7 +24,7 @@ from paperqa.types import ParsedText, ParsedMetadata, ChunkMetadata, Text
 import pymupdf
 import tiktoken
 
-from src.adapters.vectordb import VectorStore
+from src.vectorstores.vectordb import VectorStore
 from src.models import Document
 
 # Configure logging to suppress paper-qa's API-related messages
