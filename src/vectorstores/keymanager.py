@@ -190,7 +190,8 @@ class RedisKeyManager:
         Uses Redis INCRBY for atomic batch increment operation.
         Keys are generated sequentially starting from the next available ID.
         """
-        start_id = self.redis.incrby(self.counter_key, 1)
+        new_counter = self.redis.incrby(self.counter_key, batch_size)
+        start_id = new_counter - batch_size + 1
 
         return [
             f"{self.key_prefix}:{i:0{self.key_padding}d}"

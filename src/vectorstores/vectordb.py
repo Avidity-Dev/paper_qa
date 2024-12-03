@@ -148,8 +148,12 @@ class LCRedisVectorStore(VectorStore):
 
     Attributes
     ----------
+    _redis : Redis
+        LangChain Redis object.
     _embeddings : Embeddings
         LangChain Embeddings object.
+    key_manager : RedisKeyManager
+        Redis specific KeyManager object for generating and managing entry keys.
 
     Notes
     -----
