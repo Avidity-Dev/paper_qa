@@ -65,8 +65,8 @@ class DocumentProcessor:
 
 class PQADocumentProcessor(DocumentProcessor):
     """
-    Handles document processing, utilizing core paper-qa functionality which itself
-    is a wrapper around LiteLLM, among other libraries.).
+    Handles document processing utilizing paperqa functionality along with custom
+    logic.
 
     Attributes:
     -----------
@@ -95,12 +95,9 @@ class PQADocumentProcessor(DocumentProcessor):
         warnings.filterwarnings("ignore", message=".*API.*")
         warnings.filterwarnings("ignore", message=".*Provider.*")
 
-        self.settings = pqa.Settings(
-            llm="claude-3-5-sonnet-20240620",
-            summary_llm="claude-3-5-sonnet-20240620",
-            llm_config=local_llm_config,
-            summary_llm_config=local_llm_config,
-        )
+        self._settings = pqa_settings
+        self._vector_db = vector_db
+
         # TODO: Check vector store connection
 
     def process_document(self, doc: Union[os.PathLike, bytes, str, BytesIO]):
@@ -133,7 +130,7 @@ class PQADocumentProcessor(DocumentProcessor):
         if isinstance(input, (os.PathLike, str)):
             parsed_text = pqa_parse_pdf_to_pages(input)
         elif isinstance(input, (bytes, BytesIO)):
-            parsed_text = PQAProcessingRoute.parse_pdf_bytes_to_pages(input)
+            parsed_text = PQADocumentProcessor.parse_pdf_bytes_to_pages(input)
         else:
             raise ValueError(f"Unsupported input type: {type(input)}")
 
@@ -189,17 +186,31 @@ class PQADocumentProcessor(DocumentProcessor):
             parse_type="pdf_bytes",
         )
 
-        return ParsedText(pages, metadata)
+        return ParsedText(content=pages, metadata=metadata)
 
 
-    def extract_metadata(
-        self, text: ParsedText, doc: Optional[Document] = None, **kwargs
+    def extract_document_metadata(
+        self, text: ParsedText,
+        doc: Optional[Document] = None,
+        from_pages: Union[int, str, list[Union[int, str]]] = 1
     ) -> Document:
 
         if doc is None:
             doc = Document(
                 id=str(uuid.uuid4()),
             )
+
+        # TODO: Extract metadata from the document using LLM prompts first, as paperqa
+        # does, then try additional methods for missing metadata.
+
+        return
+
+
+
+
+
+
+
 
 
 
