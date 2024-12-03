@@ -5,7 +5,7 @@ from collections.abc import (
 import json
 import os
 import time
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Union
 
 from langchain_community.vectorstores import Pinecone
 from langchain_community.vectorstores.redis import Redis
@@ -33,6 +33,8 @@ from src.models import Document
 
 ListOfDict = List[Dict[str, Any]]
 
+# TODO: Implement session-based embedding logic to capture failed embedding attempts
+
 
 class VectorStore:
     """Base class for vector stores.
@@ -41,25 +43,30 @@ class VectorStore:
     asynchronous methods.
     """
 
-    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+    async def aembed_documents(
+        self, input: Union[list[str], list[Document]]
+    ) -> list[list[float]]:
         """
         Generate embeddings for a list of documents.
 
-        Detects duplicates, and does not fail if a single document fails to embed.
         """
         raise NotImplementedError
 
-    async def aembed_document(self, text: str) -> list[float]:
+    async def aembed_document(self, input: Union[str, Document]) -> list[float]:
         """Generate embedding for a single document string."""
         raise NotImplementedError
 
     @abstractmethod
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        """Synchronous version of embed_documents."""
+    def embed_documents(
+        self, input: Union[list[str], list[Document]]
+    ) -> list[list[float]]:
+        """Synchronous version of embed_documents.
+
+        """
         pass
 
     @abstractmethod
-    def embed_document(self, text: str) -> list[float]:
+    def embed_document(self, input: Union[str, Document]) -> list[float]:
         """Synchronous version of embed_document."""
         pass
 
@@ -83,15 +90,21 @@ class LCRedisVectorStore(VectorStore):
 
     Always instantiated from an existing index, as our application will be using
     permanent external storage.
+
+    Attributes
+    ----------
+    _embeddings: Embeddings
+        LangChain Embeddings object.
     """
 
     def __init__(
         self,
         index_name: str,
         index_schema: Union[Dict[str, ListOfDict], str, os.PathLike],
-        embedding: Embeddings = OpenAIEmbeddings(
+        embedding: Union[Embeddings, dict] = OpenAIEmbeddings(
             model="text-embedding-3-small",
             api_key=os.getenv("OPENAI_API_KEY"),
+            chunk_size=1500,
         ),
         vector_schema: Optional[Dict[str, Union[str, int]]] = None,
         **kwargs: Any,
@@ -103,7 +116,13 @@ class LCRedisVectorStore(VectorStore):
             vector_schema,
         )
 
-    async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
+        # TODO: Handle instantiation of Embeddings object from dict
+        self._embeddings = embedding
+
+    async def aembed_documents(
+        self,
+        input: Union[list[str], list[Document]],
+    ) -> list[list[float]]:
         """Generate embeddings for a list of documents asynchronously.
 
         Args:
@@ -112,10 +131,10 @@ class LCRedisVectorStore(VectorStore):
         Returns:
             List of embedding vectors
         """
-        embeddings = await self.embeddings.aembed_documents(texts)
+        embeddings = await self._embeddings.aembed_documents(input)
         return embeddings
 
-    async def aembed_query(self, query: str) -> List[float]:
+    async def aembed_query(self, query: str) -> list[float]:
         """Generate embedding for a single query string asynchronously.
 
         Args:
@@ -124,22 +143,48 @@ class LCRedisVectorStore(VectorStore):
         Returns:
             Query embedding vector
         """
-        embedding = await self.embeddings.aembed_query(query)
+        embedding = await self._embeddings.aembed_query(query)
         return embedding
 
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+    def embed_documents(
+        self, input: Union[list[str], list[list[str]], list[Document]]
+    ) -> list[float] | list[list[float]]
         """Synchronous version of embed_documents.
 
-        Largely defers to the underlying Redis index.
+        Defers embedding logic to the underlying Redis object.
+
+        Parameters
+        ----------
+        input: Union[list[str], list[Document]]
+            List of text strings or list of Document objects to embed.
+
+        Returns
+        -------
+        list[float] | list[list[float]]
+            List of embedding vectors for a single list of chunks or a multiple
+            lists of chunks.
         """
-        return self.embeddings.embed_documents(texts)
+        input_array = np.array(input)
+        output = []
+
+        # Check if input contains multiple document chunk lists
+        if isinstance(input[0], list):
+            for i, lst in enumerate(input):
+                doc_embeddings = []
+                for chunk in lst:
+                    doc_embeddings.append(self._embeddings.embed_document(chunk))
+                output.append(doc_embeddings)
+        else:
+            output = self._embeddings.embed_documents(input)
+
+        return output
 
     def embed_query(self, query: str) -> List[float]:
         """Synchronous version of embed_query.
 
-        Largely defers to the underlying Redis index.
+        Defers to the underlying Redis object.
         """
-        return self.embeddings.embed_query(query)
+        return self._embeddings.embed_query(query)
 
     async def aadd_document(self, doc: Document):
         """Asynchronously add a document to the vector store.
