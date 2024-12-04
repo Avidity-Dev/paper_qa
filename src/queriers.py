@@ -7,7 +7,7 @@ from typing import Any
 from paperqa.settings import Settings
 
 from src.models import Document
-from src.adapters.vectordb import VectorStore
+from src.vectorstores.vectordb import VectorStore
 
 
 class Querier:
@@ -36,4 +36,4 @@ class PQAQuerier(Querier):
         self._pqa_settings = pqa_settings
 
     def query(self, query: str, **kwargs) -> Any:
-        pass
+        embedded_query = self._vector_db.embed_query(query)

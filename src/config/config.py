@@ -23,6 +23,7 @@ class Environment(Enum):
 
 @dataclass
 class EmbeddingConfig:
+    name: str
     model: str
     dimension: int
     endpoint: str
@@ -31,12 +32,13 @@ class EmbeddingConfig:
 
 @dataclass
 class LLMConfig:
+    name: str
     model: str
     temperature: float
     max_tokens: int
-    top_p: float = 1.0
     endpoint: str
     provider: str
+    top_p: float = 1.0
 
 
 @dataclass
@@ -95,14 +97,18 @@ class ConfigurationManager:
             for name, config in self._static_configs["embedding_models"].items()
         }
 
-    def init_app_config(self) -> None:
+    def init_app_config(self, environment: str = "local") -> None:
         """Load application configuration from YAML file."""
         with open(self._app_config_path, "r") as f:
             self._app_config = yaml.safe_load(f)
 
-        default_llm_model = self._app_config["default_llm_model"]
-        default_summary_llm_model = self._app_config["default_llm_model"]
-        default_embedding_model = self._app_config["default_embedding_model"]
+        default_llm_model = self._app_config[environment]["default_llm_model"]
+        default_summary_llm_model = self._app_config[environment][
+            "default_summary_llm_model"
+        ]
+        default_embedding_model = self._app_config[environment][
+            "default_embedding_model"
+        ]
 
         try:
             self._app_config.llm_config = self._llm_configs[default_llm_model]

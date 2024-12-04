@@ -11,11 +11,13 @@ from collections.abc import (
 import json
 import os
 import time
-from typing import Any, Callable, Dict, Iterable, List, Optional, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol, Union
 import uuid
 
 from langchain_community.vectorstores import Pinecone
 from langchain_community.vectorstores.redis import Redis
+from langchain_community.vectorstores.redis.filters import RedisFilterExpression
+from langchain_core.documents import Document as LCDocument
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
 from langchain_openai import OpenAIEmbeddings
@@ -44,7 +46,7 @@ ListOfDict = List[Dict[str, Any]]
 # TODO: Implement session-based embedding logic to capture failed embedding attempts
 
 
-class VectorStore:
+class VectorStore(Protocol):
     """Base class for vector stores.
 
     Synchronous methods should be implemented in subclasses. No obligation to implement
@@ -68,7 +70,6 @@ class VectorStore:
         """
         raise NotImplementedError
 
-    @abstractmethod
     def embed_documents(
         self, input: Union[list[str], list[Document]]
     ) -> list[list[float]]:
@@ -86,7 +87,6 @@ class VectorStore:
         """
         pass
 
-    @abstractmethod
     def embed_document(self, input: Union[str, Document]) -> list[float]:
         """Synchronously generate an embedding for a single document.
 
@@ -102,9 +102,11 @@ class VectorStore:
         """
         pass
 
-    @abstractmethod
     def embed_query(self, query: str) -> list[float]:
         """Synchronously generate an embedding for a query.
+
+        Not called directly by retrieval methods since the underlying LangChain object
+        has its own implementation.
 
         Parameters
         ----------
@@ -202,9 +204,20 @@ class LCRedisVectorStore(VectorStore):
             key_prefix=key_prefix,
         )
         self.key_manager = RedisKeyManager(
-            self._redis.client, key_prefix, key_padding, counter_key
+            redis_client=self._redis.client,
+            key_prefix=key_prefix,
+            key_padding=key_padding,
+            counter_key=counter_key,
         )
         self._embeddings = embedding
+
+    @property
+    def index_name(self) -> str:
+        return self._redis.index_name
+
+    @property
+    def key_prefix(self) -> str:
+        return self._redis.key_prefix
 
     async def aembed_documents(
         self,
@@ -264,9 +277,9 @@ class LCRedisVectorStore(VectorStore):
             isinstance(input, list) and isinstance(input[0], str)
         ):
             output = self.embed_document(input)
-        elif isinstance(input[0], Document):
+        elif isinstance(input, list) and isinstance(input[0], Document):
             output = [self.embed_document(doc) for doc in input]
-        elif isinstance(input[0], list):
+        elif isinstance(input, list) and isinstance(input[0], list):
             output = []
             for i, lst in enumerate(input):
                 doc_embeddings = []
@@ -276,7 +289,8 @@ class LCRedisVectorStore(VectorStore):
         else:
             raise ValueError(
                 "Invalid input type for document embedding. "
-                "Expected Document, list of strings, or list of lists of strings."
+                "Expected Document, list of strings, or list of lists of strings. "
+                f"Got: {type(input), type(input[0])}"
             )
         return output
 
@@ -327,7 +341,8 @@ class LCRedisVectorStore(VectorStore):
     def add_documents(self, docs: list[Document]):
         """Synchronous version of add_documents.
 
-        Expects metadata to be parsed and stored in the passed Document objects.
+        Expects metadata to be parsed, text to be chunked, and stored in the passed
+        Document objects.
 
         Parameters
         ----------
@@ -335,18 +350,155 @@ class LCRedisVectorStore(VectorStore):
             List of Document objects to add.
         """
         for i, doc in enumerate(docs):
+            print(f"Adding document {i} of {len(docs)}")
             text_len = len(doc.text_chunks)
-            embeddings = self.embed_documents(doc.text_chunks)
+            texts = [chunk.text for chunk in doc.text_chunks]
+            print(f"Embedding {text_len} chunks")
+            embeddings = self.embed_documents(texts)
+            print(f"Generating {text_len} keys")
             e_keys = self.key_manager.generate_batch_keys(text_len)
             doc_dict = doc.to_dict()
             if doc.id is None:
                 doc_dict["id"] = str(uuid.uuid4())
-            self._redis.add_texts(
-                texts=doc.text_chunks,
+            self.add_texts_json(
+                texts=texts,
+                keys=e_keys,
                 metadatas=[doc_dict] * text_len,
                 embeddings=embeddings,
-                ids=e_keys,
             )
+
+    # TODO: Make JSON document generation more dynamic
+    def add_texts_json(
+        self,
+        texts: list[str],
+        keys: list[str],
+        embeddings: list[list[float]],
+        metadatas: Optional[list[dict]] = None,
+        batch_size: int = 1000,
+        **kwargs: Any,
+    ) -> None:
+        """Add texts to Redis using JSON storage instead of Hash storage."""
+        pipeline = self._redis.client.pipeline(transaction=False)
+
+        for i, text in enumerate(texts):
+            key = keys[i]
+            if not key.startswith(self.key_prefix + ":"):
+                key = self.key_prefix + ":" + key
+
+            metadata = metadatas[i] if metadatas else {}
+
+            # Create JSON document structure
+            json_doc = {
+                "id": key,
+                "content_chunks": [
+                    {
+                        "text": text,
+                        "embedding": embeddings[i],
+                    }
+                ],
+                **metadata,
+            }
+
+            pipeline.json().set(key, "$", json_doc)
+
+        # Execute batch if batch_size reached
+        if i % batch_size == 0:
+            pipeline.execute()
+
+        # Execute final batch
+        pipeline.execute()
+
+    def max_marginal_relevance_search(
+        self,
+        query: str,
+        k: int = 10,
+        fetch_k: int = 20,
+        lambda_mult: float = 0.5,
+        filter: Optional[RedisFilterExpression] = None,
+        return_metadata: bool = True,
+        distance_threshold: Optional[float] = None,
+        **kwargs: Any,
+    ) -> List[Document]:
+        """
+        Search for documents using max marginal relevance with a query. Utilizes the
+        underlying Redis object's implementation for initial retrieval and converts
+        the results to application-specific Document objects.
+
+        Parameters
+        ----------
+        query : str
+            Query text to search for.
+        """
+        lcdocs_results: list[LCDocument] = self._redis.max_marginal_relevance_search(
+            query, k, fetch_k, lambda_mult, filter, return_metadata, distance_threshold
+        )
+
+        return lcdocs_results
+
+    def clear_index_records(
+        self,
+        batch_size: int = 1000,
+        max_retries: int = 3,
+        sleep_between_batches: float = 0.1,
+    ) -> tuple[int, List[str]]:
+        """
+        Clear all records from a Redis index without dropping the index itself.
+
+        Parameters
+        ----------
+        batch_size : int
+            Number of records to delete in each batch.
+        max_retries : int
+            Maximum number of retry attempts for failed deletions.
+        sleep_between_batches : float
+            Sleep time between batches in seconds.
+
+        Returns
+        -------
+        Tuple of (total_deleted, failed_deletions)
+        """
+        total_deleted = 0
+        failed_deletions = []
+
+        while True:
+            # Search for a batch of records
+            try:
+                result = self._redis.client.execute_command(
+                    "FT.SEARCH", self.index_name, "*", "LIMIT", 0, batch_size
+                )
+            except Exception as e:
+                print(f"Error searching index: {e}")
+                break
+
+            # Check if we found any records
+            count = result[0]
+            if count == 0:
+                break
+
+            # Extract document IDs (every other element starting from index 1)
+            doc_ids = result[1::2]
+
+            # Delete each document
+            for doc_id in doc_ids:
+                retries = 0
+                while retries < max_retries:
+                    try:
+                        self._redis.client.delete(doc_id)
+                        total_deleted += 1
+                        break
+                    except Exception as e:
+                        retries += 1
+                        if retries == max_retries:
+                            print(
+                                f"Failed to delete {doc_id} after {max_retries} attempts: {e}"
+                            )
+                            failed_deletions.append(doc_id)
+                        time.sleep(0.1)  # Short sleep between retries
+
+            # Sleep between batches to reduce server load
+            time.sleep(sleep_between_batches)
+
+            return total_deleted, failed_deletions
 
 
 class LCPineconeVectorStore(VectorStore):

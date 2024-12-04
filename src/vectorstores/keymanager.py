@@ -193,7 +193,10 @@ class RedisKeyManager:
         new_counter = self.redis.incrby(self.counter_key, batch_size)
         start_id = new_counter - batch_size + 1
 
-        return [
-            f"{self.key_prefix}:{i:0{self.key_padding}d}"
-            for i in range(start_id, start_id + batch_size)
-        ]
+        print(f"Padding type: {type(self.key_padding)}")
+        print(f"Padding value: {self.key_padding}")
+
+        key_num_strs = [str(i) for i in range(start_id, new_counter + 1)]
+        key_nums = [key_num_str.zfill(self.key_padding) for key_num_str in key_num_strs]
+
+        return [f"{self.key_prefix}:{key_num}" for key_num in key_nums]
