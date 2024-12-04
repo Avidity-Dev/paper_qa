@@ -1,21 +1,13 @@
 from typing import List, Optional, Dict
 import os
-import requests
-from paperqa import Docs, Doc, Text
-from pydantic import BaseModel, Field
-from datetime import datetime
-import warnings
-import logging
-from langchain_community.embeddings import OpenAIEmbeddings
-from langchain_community.vectorstores import Pinecone as LangchainPinecone
-from pinecone import Pinecone, ServerlessSpec
-import hashlib
-import json
-from dotenv import load_dotenv
 import time
+from dotenv import load_dotenv
+from pinecone import Pinecone, ServerlessSpec
+import logging
 
 # Configure logging
-logging.getLogger('paper_qa').setLevel(logging.ERROR)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def load_environment_variables(env_file: str = '.env') -> dict:
     """
@@ -27,7 +19,6 @@ def load_environment_variables(env_file: str = '.env') -> dict:
     """
     load_dotenv(env_file)
     
-    # Required environment variables
     required_vars = {
         'PINECONE_API_KEY': os.getenv('PINECONE_API_KEY'),
         'PINECONE_ENVIRONMENT': os.getenv('PINECONE_ENVIRONMENT'),
@@ -35,7 +26,6 @@ def load_environment_variables(env_file: str = '.env') -> dict:
         'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY')
     }
     
-    # Check for missing environment variables
     missing_vars = [var for var, value in required_vars.items() if not value]
     if missing_vars:
         raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
@@ -44,19 +34,23 @@ def load_environment_variables(env_file: str = '.env') -> dict:
 
 class CreatePineconeIndex:
     def __init__(self, pinecone_api_key: str, pinecone_environment: str, index_name: str):
-        warnings.filterwarnings('ignore', message='.*API.*')
-        warnings.filterwarnings('ignore', message='.*Provider.*')
-        
-        # Initialize Pinecone
+        """
+        Initialize Pinecone index with proper error handling and validation.
+        """
+        self.index_name = index_name
         self.pc = Pinecone(api_key=pinecone_api_key)
         
         try:
-            # Create index if it doesn't exist
-            if index_name not in self.pc.list_indexes().names():
-                print(f"Creating new Pinecone index: {index_name}")
+            # Check if index exists
+            existing_indexes = self.pc.list_indexes().names()
+            
+            if index_name not in existing_indexes:
+                logger.info(f"Creating new Pinecone index: {index_name}")
+                
+                # Create index with specified configuration
                 self.pc.create_index(
                     name=index_name,
-                    dimension=1536,
+                    dimension=1536,  # OpenAI embedding dimension
                     metric='cosine',
                     spec=ServerlessSpec(
                         cloud='aws',
@@ -64,22 +58,41 @@ class CreatePineconeIndex:
                     )
                 )
                 
-                # Wait for index to be ready
+                # Wait for index to be ready with timeout
+                max_wait_time = 300  # 5 minutes timeout
+                start_time = time.time()
+                
                 while index_name not in self.pc.list_indexes().names():
-                    print("Waiting for index to be created...")
-                    time.sleep(1)
-                print(f"Successfully created Pinecone index: {index_name}")
+                    if time.time() - start_time > max_wait_time:
+                        raise TimeoutError(f"Index creation timed out after {max_wait_time} seconds")
+                    logger.info("Waiting for index to be created...")
+                    time.sleep(5)
+                
+                logger.info(f"Successfully created Pinecone index: {index_name}")
             else:
-                print(f"Using existing Pinecone index: {index_name}")
+                logger.info(f"Using existing Pinecone index: {index_name}")
             
+            # Verify index configuration
+            index_description = self.pc.describe_index(index_name)
+            if index_description.dimension != 1536:
+                raise ValueError(f"Existing index has incorrect dimension: {index_description.dimension}")
+                
         except Exception as e:
-            print(f"Error initializing Pinecone: {str(e)}")
-            raise  
+            logger.error(f"Error initializing Pinecone: {str(e)}")
+            raise
+
+def main():
+    try:
+        env_vars = load_environment_variables()
+        index = CreatePineconeIndex(
+            pinecone_api_key=env_vars['PINECONE_API_KEY'],
+            pinecone_environment=env_vars['PINECONE_ENVIRONMENT'],
+            index_name=env_vars['PINECONE_INDEX_NAME']
+        )
+        return index
+    except Exception as e:
+        logger.error(f"Failed to create Pinecone index: {str(e)}")
+        raise
 
 if __name__ == "__main__":
-    env_vars = load_environment_variables()
-    index = CreatePineconeIndex(
-        pinecone_api_key=env_vars['PINECONE_API_KEY'],
-        pinecone_environment=env_vars['PINECONE_ENVIRONMENT'],
-        index_name=env_vars['PINECONE_INDEX_NAME']
-    )
+    main()

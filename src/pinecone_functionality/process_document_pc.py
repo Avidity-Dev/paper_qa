@@ -1,136 +1,96 @@
-from typing import Optional, Dict
-from langchain_openai import OpenAIEmbeddings
-from langchain_community.vectorstores import Pinecone as LangchainPinecone
-from langchain.docstore.document import Document as LangchainDocument
-from paperqa import Doc
-from paperqa.readers import read_doc
-from dotenv import load_dotenv
-import hashlib
-import os
-from datetime import datetime
+from typing import List, Tuple, Set
+import pinecone
+from paperqa.types import Embeddable
+from paperqa.llms import VectorStore
+import numpy as np
 
-class DocumentProcessor:
-    """Simple document processor that stores embeddings in Pinecone."""
+class PineconeVectorStore(VectorStore):
+    """Custom Pinecone vector store implementation for paper-qa."""
     
-    def __init__(self, pinecone_api_key: str, pinecone_environment: str, index_name: str):
-        """Initialize with Pinecone credentials."""
-        self.embeddings = OpenAIEmbeddings()
+    def __init__(self, index_name: str, api_key: str, environment: str):
+        """Initialize Pinecone vector store."""
+        super().__init__()
+        # Initialize Pinecone
+        pinecone.init(api_key=api_key, environment=environment)
+        self.index = pinecone.Index(index_name)
+        self.texts_hashes: Set[int] = set()  # Track stored text hashes
         
-        # Initialize Pinecone index
-        self.index = LangchainPinecone.from_existing_index(
-            index_name=index_name,
-            embedding=self.embeddings
-        )
-
-    def process_document(self, filepath: str) -> Optional[Dict]:
-        """Process a document and store its embeddings in Pinecone."""
-        try:
-            filename = os.path.basename(filepath)
-            print(f"\nProcessing document: {filename}")
-            
-            # Generate document ID
-            doc_id = hashlib.md5(filepath.encode()).hexdigest()
-            
-            # Create Doc object with required fields
-            doc = Doc(
-                docname=filename,
-                citation=f"File: {filename}",
-                dockey=doc_id
-            )
-            
-            # Use paper-qa's read_doc function directly
-            print("Loading document...")
-            texts = read_doc(
-                filepath,
-                doc,
-                chunk_chars=1500,
-                overlap=150
-            )
-            
-            if not texts:
-                print("No text chunks were generated")
-                return None
-            
-            print(f"Generated {len(texts)} text chunks")
-            
-            # Create Langchain documents
-            langchain_docs = []
-            for i, text in enumerate(texts):
-                chunk_id = hashlib.md5(f"{doc_id}_{i}".encode()).hexdigest()
-                langchain_docs.append(
-                    LangchainDocument(
-                        page_content=text.text,
-                        metadata={
-                            "text": text.text,
-                            "doc_name": text.name,
-                            "doc_id": doc_id,
-                            "citation": doc.citation,
-                            "chunk_index": i,
-                            "chunk_id": chunk_id
-                        }
-                    )
-                )
-            
-            # Store text chunks with metadata
-            print("Storing chunks in Pinecone...")
-            self.index.add_documents(langchain_docs)
-            
-            # Store document metadata
+    def add_texts_and_embeddings(self, texts: List[Embeddable]) -> None:
+        """Add texts and their embeddings to Pinecone."""
+        vectors_to_upsert = []
+        
+        for text in texts:
+            vector_id = str(hash(text))  # Convert hash to string for Pinecone
+            # Include necessary metadata
             metadata = {
-                "filepath": filepath,
-                "filename": filename,
-                "doc_id": doc_id,
-                "chunk_count": len(texts),
-                "processed_date": datetime.now().isoformat(),
-                "type": "document_metadata"
+                "text": text.text,  # Original text needed for retrieval
+                "name": getattr(text, 'name', ''),  # Document name if available
+                "citation": getattr(text, 'citation', '')  # Citation if available
             }
+            # Convert embedding to list for Pinecone
+            embedding = text.embedding.tolist() if isinstance(text.embedding, np.ndarray) else text.embedding
             
-            # Store document metadata as a document
-            metadata_doc = LangchainDocument(
-                page_content=f"Document metadata for {filename}",
-                metadata=metadata
+            vectors_to_upsert.append((vector_id, embedding, metadata))
+        
+        # Batch upsert to Pinecone
+        if vectors_to_upsert:
+            self.index.upsert(vectors=vectors_to_upsert)
+            # Update tracked hashes
+            self.texts_hashes.update(hash(t) for t in texts)
+    
+    async def similarity_search(
+        self, 
+        query: str, 
+        k: int, 
+        embedding_model
+    ) -> Tuple[List[Embeddable], List[float]]:
+        """Perform similarity search in Pinecone."""
+        # Get query embedding
+        query_embedding = (await embedding_model.embed_documents([query]))[0]
+        
+        # Convert numpy array to list if necessary
+        if isinstance(query_embedding, np.ndarray):
+            query_embedding = query_embedding.tolist()
+        
+        # Query Pinecone
+        results = self.index.query(
+            vector=query_embedding,
+            top_k=k,
+            include_metadata=True,
+            include_values=True  # Need embeddings for Embeddable objects
+        )
+        
+        # Create Embeddable objects from results
+        embeddables = []
+        scores = []
+        
+        for match in results.matches:
+            embeddable = Embeddable(
+                text=match.metadata["text"],
+                embedding=np.array(match.values),  # Convert back to numpy array
+                name=match.metadata.get("name", ""),
+                citation=match.metadata.get("citation", "")
             )
-            self.index.add_documents([metadata_doc])
-            
-            print(f"Successfully processed document with {len(texts)} chunks")
-            return metadata
-            
+            embeddables.append(embeddable)
+            scores.append(match.score)
+        
+        return embeddables, scores
+    
+    def clear(self) -> None:
+        """Clear all vectors from the index."""
+        try:
+            # Delete all vectors
+            self.index.delete(delete_all=True)
+            # Clear tracked hashes
+            self.texts_hashes.clear()
         except Exception as e:
-            print(f"Error processing document {filepath}: {str(e)}")
-            return None
-
-def load_environment_variables():
-    """Load environment variables from .env file."""
-    load_dotenv()
+            raise Exception(f"Failed to clear Pinecone index: {str(e)}")
     
-    required_vars = {
-        'PINECONE_API_KEY': os.getenv('PINECONE_API_KEY'),
-        'PINECONE_ENVIRONMENT': os.getenv('PINECONE_ENVIRONMENT'),
-        'PINECONE_INDEX_NAME': os.getenv('PINECONE_INDEX_NAME'),
-        'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY')
-    }
-    
-    missing_vars = [var for var, value in required_vars.items() if not value]
-    if missing_vars:
-        raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
-    
-    return required_vars
-
-if __name__ == "__main__":
-    # Load environment variables
-    env_vars = load_environment_variables()
-    
-    # Initialize processor with environment variables
-    processor = DocumentProcessor(
-        pinecone_api_key=env_vars['PINECONE_API_KEY'],
-        pinecone_environment=env_vars['PINECONE_ENVIRONMENT'],
-        index_name=env_vars['PINECONE_INDEX_NAME']
-    )
-    
-    # Process your document
-    filepath = "insert_path_here.pdf"
-    metadata = processor.process_document(filepath)
-    if metadata:
-        print(f"Successfully processed document: {metadata['filename']}")
-        processor.verify_document(metadata['doc_id'])
+    def __len__(self) -> int:
+        """Return number of vectors in store."""
+        try:
+            stats = self.index.describe_index_stats()
+            return stats.total_vector_count
+        except Exception as e:
+            raise Exception(f"Failed to get index stats: {str(e)}")
         

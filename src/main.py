@@ -40,21 +40,26 @@ def main() -> None:
     # Initialize the document processor
     processor = DocumentProcessor()
     
+    # Get the project root directory (one level up from src)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
     # Specify the directory containing PDF files
-    papers_directory = os.path.join(os.getcwd(), 'data', 'raw')
+    papers_directory = os.path.join(project_root, 'data', 'RAW')
+    
+    print(f"Looking for PDFs in: {papers_directory}")
     
     # Check if the directory exists and has PDF files
     if not os.path.exists(papers_directory):
         print(f"Creating directory: {papers_directory}")
         os.makedirs(papers_directory)
-        print("Please add your PDF files to the 'data/raw' directory and run the script again.")
+        print("Please add your PDF files to the 'data/RAW' directory and run the script again.")
         return
     
     # Retrieve PDF files from the directory
     pdf_files = get_pdf_files(papers_directory)
     
     if not pdf_files:
-        print("No PDF files found in the 'data/raw' directory.")
+        print("No PDF files found in the 'data/RAW' directory.")
         print("Please add your PDF files and run the script again.")
         return
     
