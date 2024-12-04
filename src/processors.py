@@ -17,6 +17,7 @@ import os
 
 from dotenv import load_dotenv
 import paperqa as pqa
+from paperqa.docs import Doc
 from paperqa.utils import ImpossibleParsingError
 from paperqa.readers import chunk_pdf as pqa_chunk_pdf
 from paperqa.readers import parse_pdf_to_pages as pqa_parse_pdf_to_pages
@@ -111,22 +112,24 @@ class PQADocumentProcessor(DocumentProcessor):
             provided, otherwise custom processing is done.
         """
 
-       pass
-
+        pass
 
     def process_documents(self, input: List[Union[os.PathLike, bytes, str, BytesIO]]):
         pass
 
     @staticmethod
     def chunk_pdf(
-        input: Union[os.PathLike, bytes, str, BytesIO], chunk_chars: int, overlap: int
+        input: Union[os.PathLike, bytes, str, BytesIO],
+        chunk_chars: int = 1500,
+        overlap: int = 100,
     ) -> list[Text]:
         """
         Chunk a PDF document into chunks of a given size. Uses paper-qa's chunk_pdf
         function for the actual chunking, but pagination is handled by either paperqa or
         custom logic depending on the input type.
         """
-
+        # fake doc
+        doc = Doc(docname="", citation="", dockey="fake_doc")
         if isinstance(input, (os.PathLike, str)):
             parsed_text = pqa_parse_pdf_to_pages(input)
         elif isinstance(input, (bytes, BytesIO)):
@@ -134,7 +137,9 @@ class PQADocumentProcessor(DocumentProcessor):
         else:
             raise ValueError(f"Unsupported input type: {type(input)}")
 
-        return pqa_chunk_pdf(parsed_text, chunk_chars, overlap)
+        return pqa_chunk_pdf(
+            parsed_text=parsed_text, doc=doc, chunk_chars=chunk_chars, overlap=overlap
+        )
 
     @staticmethod
     def parse_pdf_bytes_to_pages(
@@ -166,7 +171,7 @@ class PQADocumentProcessor(DocumentProcessor):
                     page = pdf.load_page(i)
                 except pymupdf.mupdf.FzErrorFormat as exc:
                     raise ImpossibleParsingError(
-                    f"Page loading via {pymupdf.__name__} failed on page {i} of"
+                        f"Page loading via {pymupdf.__name__} failed on page {i} of"
                         f" {pdf.page_count} for the PDF bytes stream."
                     ) from exc
                 text = page.get_text("text", sort=True)
@@ -188,11 +193,11 @@ class PQADocumentProcessor(DocumentProcessor):
 
         return ParsedText(content=pages, metadata=metadata)
 
-
     def extract_document_metadata(
-        self, text: ParsedText,
+        self,
+        text: ParsedText,
         doc: Optional[Document] = None,
-        from_pages: Union[int, str, list[Union[int, str]]] = 1
+        from_pages: Union[int, str, list[Union[int, str]]] = 1,
     ) -> Document:
 
         if doc is None:
@@ -203,14 +208,4 @@ class PQADocumentProcessor(DocumentProcessor):
         # TODO: Extract metadata from the document using LLM prompts first, as paperqa
         # does, then try additional methods for missing metadata.
 
-        return
-
-
-
-
-
-
-
-
-
-
+        pass
