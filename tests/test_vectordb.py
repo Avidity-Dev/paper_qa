@@ -1,6 +1,9 @@
+import os
+import yaml
 from paperqa.types import Text
 import pytest
 
+import dotenv
 from dataclasses import dataclass
 from src.models import Document
 from src.vectorstores.keymanager import RedisKeyManager
@@ -31,21 +34,37 @@ def get_matching_doc_ids(
 
 
 @pytest.fixture
-def local_redis_dict(index_schema_dict: dict) -> dict:
-    return {
-        "redis_url": "redis://localhost:6379",
+def local_redis_dict() -> dict:
+    dotenv.load_dotenv()
+    config_path = os.getenv("REDIS_VECTOR_CONFIG")
+    with open(config_path, "r") as f:
+        index_config = yaml.safe_load(f)
+
+    # TODO: Make this more dynamic by importing from ConfigurationManager
+    vector_config = {
+        "index_schema": index_config,
         "index_name": "idx:docs_vss",
         "key_prefix": "docs",
-        "index_schema": index_schema_dict,
         "counter_key": "docs_ctr",
-        "key_padding": 4,
+        "redis_url": "redis://localhost:6379",
     }
+    print(f"vector_config: {vector_config}")
+    return vector_config
 
 
 # Ensure that the index is created locally and redis is running before test
 def test_vector_db_init(local_redis_dict: dict):
     vector_db = LCRedisVectorStore(**local_redis_dict)
     assert vector_db is not None
+
+
+def test_vector_db_init_yaml():
+    with open("src/config/vector.yaml", "r") as f:
+        index_config = yaml.safe_load(f)
+
+    vector_db = LCRedisVectorStore(**vector_config)
+    assert vector_db is not None
+    assert vector_db.index_name == "idx:docs_vss"
 
 
 @pytest.fixture

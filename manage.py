@@ -3,14 +3,157 @@ Commands for application environment management.
 """
 
 import os
-
+from typing import Dict, Any, Union
+import yaml
 import click
+from langchain_community.vectorstores import Redis
+from langchain_community.vectorstores.redis.schema import read_schema
 import redis
 
-from src.config.config import VEC_IDX_NAME, VEC_IDX_PREFIX
+from src.config.config import ConfigurationManager
 
 # TODO: Create a function to generate this command from config and be able to run from
 # from the command line.
 FT_CREATE_COMMAND = """
-FT.CREATE idx:docs_vss ON JSON PREFIX 1 docs: SCHEMA $.id AS id TEXT NOSTEM $.title AS title TEXT WEIGHT 1.0 $.authors AS authors TAG SEPARATOR "|" $.doi AS doi TEXT NOSTEM $.published_date AS published_date NUMERIC SORTABLE $.created_at AS created_at NUMERIC SORTABLE $.content_chunks[*].text AS chunk_text TEXT WEIGHT 1.0 $.content_chunks[*].embedding AS vector VECTOR FLAT 6 TYPE FLOAT32 DIM 1536 DISTANCE_METRIC COSINE
+FT.CREATE idx:docs_vss ON JSON PREFIX 1 docs: SCHEMA $.id AS id TEXT NOSTEM $.title AS title TEXT WEIGHT 1.0 $.authors AS authors TAG SEPARATOR "|" $.doi AS doi TEXT NOSTEM $.published_date AS published_date NUMERIC SORTABLE $.created_at AS created_at NUMERIC SORTABLE $.text AS text TEXT WEIGHT 1.0 $.embedding AS vector VECTOR FLAT 6 TYPE FLOAT32 DIM 1536 DISTANCE_METRIC COSINE
 """
+
+
+class RedisManager:
+    def __init__(
+        self,
+        host: str = "localhost",
+        port: int = 6379,
+        db: int = 0,
+        app_config_path: str = "src/config/app.yaml",
+        static_config_path: str = "src/config/static.yaml",
+    ):
+        self.client = redis.Redis(host=host, port=port, db=db, decode_responses=True)
+        self.config_manager = ConfigurationManager(
+            app_config_path=app_config_path, static_config_path=static_config_path
+        )
+
+    def create_index(self, config: Union[Dict[str, Any], os.PathLike[str]]) -> None:
+        """Creates a Redis index from a configuration dictionary."""
+
+        # Get the app configuration to get the embeddings size
+        embedding_config = self.config_manager.embedding_config
+
+        if isinstance(config, os.PathLike):
+            with open(config, "r") as f:
+                config = yaml.safe_load(f)
+
+        index_name = config["name"]
+        prefix = config["prefix"]
+        schema = config["schema"]
+
+        # Build the FT.CREATE command
+        schema_str = " ".join(
+            [
+                f"$.{field['path']} AS {field['as']} {field['type']}"
+                + (f" WEIGHT {field['weight']}" if "weight" in field else "")
+                + (
+                    f" SEPARATOR \"{field['separator']}\""
+                    if "separator" in field
+                    else ""
+                )
+                + (f" SORTABLE" if field.get("sortable", False) else "")
+                + (f" NOSTEM" if field.get("nostem", False) else "")
+                + (
+                    (
+                        " VECTOR FLAT "
+                        + str(field["M"])
+                        + f" TYPE {field['vector_type']} DIM {field['dimensions']}"
+                        + f" DISTANCE_METRIC {field['distance_metric']}"
+                    )
+                    if field.get("vector", False)
+                    else ""
+                )
+                for field in schema
+            ]
+        )
+
+        create_cmd = (
+            f"FT.CREATE {index_name} ON JSON PREFIX {prefix} SCHEMA {schema_str}"
+        )
+
+        try:
+            self.client.execute_command(create_cmd)
+            click.echo(f"Successfully created index '{index_name}'")
+        except redis.exceptions.ResponseError as e:
+            if "Index already exists" in str(e):
+                click.echo(f"Index '{index_name}' already exists")
+            else:
+                raise e
+
+    def delete_index(self, index_name: str) -> None:
+        """Deletes a Redis index."""
+        try:
+            self.client.execute_command(f"FT.DROPINDEX {index_name}")
+            click.echo(f"Successfully deleted index '{index_name}'")
+        except redis.exceptions.ResponseError as e:
+            click.echo(f"Error deleting index: {str(e)}")
+
+    def clear_documents(self, prefix: str) -> None:
+        """Deletes all documents with the given prefix."""
+        try:
+            cursor = 0
+            while True:
+                cursor, keys = self.client.scan(cursor, match=f"{prefix}*", count=100)
+                if keys:
+                    self.client.delete(*keys)
+                if cursor == 0:
+                    break
+            click.echo(f"Successfully cleared all documents with prefix '{prefix}'")
+        except Exception as e:
+            click.echo(f"Error clearing documents: {str(e)}")
+
+
+@click.group()
+def cli():
+    """Redis Index Management CLI"""
+    pass
+
+
+@cli.command()
+@click.option("--host", default="localhost", help="Redis host")
+@click.option("--port", default=6379, help="Redis port")
+@click.option(
+    "--config",
+    required=True,
+    type=click.Path(exists=True),
+    help="Path to index config YAML file",
+)
+def create_index(host: str, port: int, config: str):
+    """Create a Redis index from a YAML configuration file."""
+    with open(config, "r") as f:
+        config_data = yaml.safe_load(f)
+
+    redis_manager = RedisManager(host=host, port=port)
+    redis_manager.create_index(config_data)
+
+
+@cli.command()
+@click.option("--host", default="localhost", help="Redis host")
+@click.option("--port", default=6379, help="Redis port")
+@click.option("--index", required=True, help="Name of the index to delete")
+@click.option("--prefix", required=True, help="Document prefix to clear")
+def delete_index_and_documents(host: str, port: int, index: str, prefix: str):
+    """Delete a Redis index and all its documents."""
+    redis_manager = RedisManager(host=host, port=port)
+    redis_manager.delete_index(index)
+    redis_manager.clear_documents(prefix)
+
+
+@cli.command()
+@click.option("--host", default="localhost", help="Redis host")
+@click.option("--port", default=6379, help="Redis port")
+@click.option("--prefix", required=True, help="Document prefix to clear")
+def clear_documents(host: str, port: int, prefix: str):
+    """Clear all documents with the given prefix."""
+    redis_manager = RedisManager(host=host, port=port)
+    redis_manager.clear_documents(prefix)
+
+
+if __name__ == "__main__":
+    cli()

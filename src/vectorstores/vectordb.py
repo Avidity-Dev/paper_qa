@@ -372,8 +372,8 @@ class LCRedisVectorStore(VectorStore):
         self,
         texts: list[str],
         keys: list[str],
-        embeddings: list[list[float]],
         metadatas: Optional[list[dict]] = None,
+        embeddings: Optional[list[list[float]]] = None,
         batch_size: int = 1000,
         **kwargs: Any,
     ) -> None:
@@ -385,17 +385,15 @@ class LCRedisVectorStore(VectorStore):
             if not key.startswith(self.key_prefix + ":"):
                 key = self.key_prefix + ":" + key
 
+            # check if metadata is provided and convert none values to strings
             metadata = metadatas[i] if metadatas else {}
+            metadata = {k: "" if v is None else v for k, v in metadata.items()}
 
             # Create JSON document structure
             json_doc = {
-                "id": key,
-                "content_chunks": [
-                    {
-                        "text": text,
-                        "embedding": embeddings[i],
-                    }
-                ],
+                "id": str(key),
+                "text": text,
+                "embedding": embeddings[i],
                 **metadata,
             }
 

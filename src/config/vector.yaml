@@ -1,0 +1,38 @@
+text:
+  - name: text_chunks
+    weight: 1.0
+    no_stem: false
+    sortable: false
+  - name: title
+    weight: 1.0
+    no_stem: false
+    sortable: false
+  - name: id
+    weight: 1.0
+    no_stem: true
+  - name: doi
+    weight: 1.0
+    no_stem: true
+
+tag:
+  - name: authors
+    separator: "|"
+    case_sensitive: false
+    sortable: false
+
+numeric:
+  - name: published_date
+    sortable: true
+  - name: created_at
+    sortable: true
+
+vector:
+  - name: embeddings
+    algorithm: FLAT
+    dims: 1536
+    datatype: FLOAT32
+    distance_metric: COSINE
+    initial_cap: 1000
+
+content_key: text_chunks
+content_vector_key: embeddings

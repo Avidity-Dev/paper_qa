@@ -83,6 +83,27 @@ class ConfigurationManager:
         self.init_static_configs()
         self.init_app_config()
 
+    @property
+    def app_config(self) -> AppConfig:
+        """Get the application configuration."""
+        return self._app_config
+
+    @property
+    def embedding_config(self) -> Dict[str, EmbeddingConfig]:
+        """Get the embedding configuration.
+
+        Returns
+        -------
+        Dict[str, EmbeddingConfig]
+            Model short name, Embedding config dictionary
+        """
+        return self._app_config.embedding_config
+
+    @property
+    def llm_config(self) -> Dict[str, LLMConfig]:
+        """Get the LLM configuration."""
+        return self._app_config.llm_config
+
     def init_static_configs(self) -> None:
         """Load static configuration options from YAML file."""
         with open(self._static_config_path, "r") as f:

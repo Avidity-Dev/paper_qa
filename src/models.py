@@ -26,7 +26,5 @@ class Document:
         """Convert the Document object to a dictionary, extracting the text from the
         text_chunks.
         """
-        chunk_strs = [chunk.text for chunk in self.text_chunks]
         out = {k: v for k, v in self.__dict__.items() if k != "text_chunks"}
-        out["text_chunks"] = chunk_strs
         return out
