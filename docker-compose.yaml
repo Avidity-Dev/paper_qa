@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   redis:
-    image: redis-stack:latest
+    image: redis/redis-stack-server:latest
     container_name: redis-cache
     ports:
       - "6379:6379"

@@ -775,12 +775,6 @@ class PQARedisVectorStore:
         self._index_definition = IndexDefinition(
             prefix=[key_prefix], index_type=self.index_type
         )
-
-    @property
-    def index_definition(self) -> IndexDefinition:
-        return self._index_definition
-
-    def connect(self) -> None:
         self.redis_client = redis.from_url(self.redis_url)
         self.create_index(
             self.index_name,
@@ -793,6 +787,10 @@ class PQARedisVectorStore:
             key_prefix=self.key_prefix,
             counter_key=self.counter_key,
         )
+
+    @property
+    def index_definition(self) -> IndexDefinition:
+        return self._index_definition
 
     def create_index(
         self,
@@ -983,15 +981,12 @@ class PQARedisVectorStore:
         ]
 
     def clear(self) -> None:
-        """Clear all data from the store."""
+        """Clear all data from the store but keep the index."""
         try:
             # Delete all keys with the index prefix
             keys = self.redis_client.keys(f"{self.index_name}:*")
             if keys:
                 self.redis_client.delete(*keys)
-
-            # Drop the index
-            self.redis_client.ft(self.index_name).dropindex(delete_documents=True)
 
             self.texts.clear()
             super().clear()

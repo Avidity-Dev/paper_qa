@@ -96,7 +96,6 @@ class PQADocumentProcessor:
 
         self._settings = pqa_settings
         self._vector_db = vector_db
-        self._vector_db.connect()
 
     async def build_doc(
         self, input: Union[os.PathLike, bytes, str, BytesIO]
