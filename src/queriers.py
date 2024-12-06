@@ -6,7 +6,7 @@ from typing import Any
 
 from paperqa.settings import Settings
 
-from src.models import Document
+from src.models import PQADocument
 from src.vectorstores.vectordb import VectorStore
 
 
@@ -32,8 +32,24 @@ class PQAQuerier(Querier):
     """
 
     def __init__(self, vector_db: VectorStore, pqa_settings: Settings):
-        super().__init__(vector_db)
+        self._vector_db = vector_db
         self._pqa_settings = pqa_settings
 
-    def query(self, query: str, **kwargs) -> Any:
-        embedded_query = self._vector_db.embed_query(query)
+        self._vector_db.connect()
+
+    @property
+    def llm(self):
+        return self._pqa_settings.get_llm()
+
+    @property
+    def embedding_model(self):
+        return self._pqa_settings.get_embedding_model()
+
+    async def query(self, query: str, **kwargs) -> Any:
+        results = await self._vector_db.max_marginal_relevance_search(
+            query,
+            k=kwargs.get("k", 10),
+            fetch_k=kwargs.get("fetch_k", 100),
+            embedding_model=self.embedding_model,
+        )
+        return results

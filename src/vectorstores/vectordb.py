@@ -50,6 +50,11 @@ ListOfDict = List[Dict[str, Any]]
 logger = logging.getLogger(__name__)
 
 
+def cosine_similarity(a, b):
+    norm_product = np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1)
+    return a @ b.T / norm_product
+
+
 class EmbeddingModes(StrEnum):
     DOCUMENT = "document"
     QUERY = "query"
@@ -713,9 +718,6 @@ class PQAPineconeVectorStore(PQAVectorStore, BaseModel):
 class PQARedisVectorStore:
     """Implementation of the paper-qa VectorStore interface for Redis."""
 
-    # Override the parent's default model config to allow arbitrary types
-    model_config = {"arbitrary_types_allowed": True}
-
     redis_client: redis.Redis = None
     redis_url: str = None
     index_name: str = "idx:doc_chunks_v1"
@@ -883,11 +885,6 @@ class PQARedisVectorStore:
         """Perform similarity search using Redis."""
         logger.info(f"Starting similarity search for query: {query[:50]}...")
 
-        k = min(k, len(self.texts))
-        if k == 0:
-            logger.info("No texts to search through")
-            return [], []
-
         try:
             # Get query embedding
             embedding_model.set_mode(EmbeddingModes.QUERY)
@@ -895,11 +892,12 @@ class PQARedisVectorStore:
             embedding_model.set_mode(EmbeddingModes.DOCUMENT)
 
             # Convert to numpy array and then to list
-            query_vector = np.array(query_embedding, dtype=np.float32).tolist()
+            query_vector = np.array(query_embedding, dtype=np.float32).tobytes()
 
             # Construct Redis vector similarity query
             q = (
                 Query(f"*=>[KNN {k} @embedding $query_vector AS score]")
+                .sort_by("score")
                 .return_fields("text", "name", "score")
                 .dialect(2)
             )
@@ -914,14 +912,17 @@ class PQARedisVectorStore:
             scores = []
 
             for doc in results.docs:
-                # Find original document in self.texts
-                original_doc = next(t for t in self.texts if t.name == doc.name)
-
+                # Get the original embedding
+                embedding = self.redis_client.json().get(doc.id, "$.embedding")[0]
                 text_obj = PQAText(
                     text=doc.text,
                     name=doc.name,
-                    embedding=original_doc.embedding,
-                    doc=original_doc.doc,
+                    doc=PQADocument(
+                        id=doc.name,
+                        dockey="",
+                        citation="",
+                    ),
+                    embedding=embedding,
                 )
                 matches.append(text_obj)
                 scores.append(float(doc.score))
@@ -934,6 +935,52 @@ class PQARedisVectorStore:
         except Exception as e:
             logger.error(f"Error in similarity search: {str(e)}", exc_info=True)
             return [], []
+
+    async def max_marginal_relevance_search(
+        self, query: str, k: int, fetch_k: int, embedding_model: PQAEmbeddingModel
+    ) -> tuple[Sequence[PQAEmbeddable], list[float]]:
+        """Vectorized implementation of Maximal Marginal Relevance (MMR) search.
+
+        Args:
+            query: Query vector.
+            k: Number of results to return.
+            fetch_k: Number of results to fetch from the vector store.
+            embedding_model: model used to embed the query
+
+        Returns:
+            List of tuples (doc, score) of length k.
+        """
+        if fetch_k < k:
+            raise ValueError("fetch_k must be greater or equal to k")
+
+        texts, scores = await self.similarity_search(query, fetch_k, embedding_model)
+        if len(texts) <= k or self.mmr_lambda >= 1.0:
+            return texts, scores
+
+        embeddings = np.array([t.embedding for t in texts])
+        np_scores = np.array(scores)
+        similarity_matrix = cosine_similarity(embeddings, embeddings)
+
+        selected_indices = [0]
+        remaining_indices = list(range(1, len(texts)))
+
+        while len(selected_indices) < k:
+            selected_similarities = similarity_matrix[:, selected_indices]
+            max_sim_to_selected = selected_similarities.max(axis=1)
+
+            mmr_scores = (
+                self.mmr_lambda * np_scores
+                - (1 - self.mmr_lambda) * max_sim_to_selected
+            )
+            mmr_scores[selected_indices] = -np.inf  # Exclude already selected documents
+
+            max_mmr_index = mmr_scores.argmax()
+            selected_indices.append(max_mmr_index)
+            remaining_indices.remove(max_mmr_index)
+
+        return [texts[i] for i in selected_indices], [
+            scores[i] for i in selected_indices
+        ]
 
     def clear(self) -> None:
         """Clear all data from the store."""
