@@ -5,7 +5,8 @@ Document repository querying functionality.
 from typing import Any
 
 from paperqa.docs import Docs as PQADocs
-from paperqa.settings import Settings
+from paperqa.settings import Settings as PQASettings
+from paperqa.settings import AnswerSettings as PQAAnswerSettings
 from paperqa.types import PQASession
 
 from src.models import PQADocument
@@ -33,8 +34,14 @@ class PQAQuerier:
     Query class to interrogate a document repository using functionality from paper-qa.
     """
 
-    def __init__(self, vector_db: VectorStore, pqa_settings: Settings):
+    def __init__(
+        self,
+        vector_db: VectorStore,
+        pqa_settings: PQASettings,
+        pqa_answer_settings: PQAAnswerSettings,
+    ):
         self._pqa_settings = pqa_settings
+        self._pqa_answer_settings = pqa_answer_settings
         self._pqa_docs = PQADocs(
             texts_index=self._vector_db,
         )
@@ -57,10 +64,6 @@ class PQAQuerier:
 
     async def query(self, query: str, **kwargs) -> Any:
         # Get the results from the vector database, along with the embeddings
-        pqa_session = PQASession(
-            llm=self.llm,
-            docs=self._pqa_docs,
-        )
         relevant_docs = await self.mmr(query, **kwargs)
 
         # Get the LLM to answer the question
