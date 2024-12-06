@@ -5,9 +5,9 @@ import pytest
 
 import dotenv
 from dataclasses import dataclass
-from src.models import Document
+from src.models import PQADocument
 from src.vectorstores.keymanager import RedisKeyManager
-from src.vectorstores.vectordb import LCRedisVectorStore
+from src.vectorstores.vectordb import LCRedisVectorStore, PQARedisVectorStore
 
 
 def get_matching_doc_ids(
@@ -62,13 +62,19 @@ def test_vector_db_init_yaml():
     with open("src/config/vector.yaml", "r") as f:
         index_config = yaml.safe_load(f)
 
-    vector_db = LCRedisVectorStore(**vector_config)
+    vector_db = LCRedisVectorStore(
+        index_schema=index_config,
+        index_name="idx:docs_vss",
+        key_prefix="docs",
+        counter_key="docs_ctr",
+        redis_url="redis://localhost:6379",
+    )
     assert vector_db is not None
     assert vector_db.index_name == "idx:docs_vss"
 
 
 @pytest.fixture
-def local_redis_vector_db(local_redis_dict: dict) -> LCRedisVectorStore:
+def local_lcredis_vector_db(local_redis_dict: dict) -> LCRedisVectorStore:
     return LCRedisVectorStore(**local_redis_dict)
 
 
@@ -83,7 +89,7 @@ def test_embed_chunks(
 
 @pytest.mark.integration
 def test_add_documents(
-    doc_objects: list[Document], local_redis_vector_db: LCRedisVectorStore
+    doc_objects: list[PQADocument], local_redis_vector_db: LCRedisVectorStore
 ):
     titles = ["TestTitle1", "TestTitle2", "TestTitle3"]
     # Add titles to docs
@@ -109,3 +115,13 @@ def test_add_documents(
 
     # Clear the index
     local_redis_vector_db.clear_index_records()
+
+
+def test_create_pqaredisvectorstore():
+    pqa_vector_db = PQARedisVectorStore(
+        redis_url="redis://localhost:6379",
+    )
+    assert pqa_vector_db is not None
+
+    # flush the db
+    pqa_vector_db.redis_client.flushall()

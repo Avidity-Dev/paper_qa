@@ -16,17 +16,25 @@ from typing import Any, List, Optional, Union
 import os
 
 from dotenv import load_dotenv
+import numpy as np
 import paperqa as pqa
-from paperqa.docs import Doc
+from paperqa.docs import Doc as PQADoc
+from paperqa.docs import Docs as PQADocs
+from paperqa.llms import VectorStore as PQAVectorStore
 from paperqa.utils import ImpossibleParsingError
 from paperqa.readers import chunk_pdf as pqa_chunk_pdf
 from paperqa.readers import parse_pdf_to_pages as pqa_parse_pdf_to_pages
-from paperqa.types import ParsedText, ParsedMetadata, ChunkMetadata, Text
+from paperqa.types import Text as PQAText
+from paperqa.types import ParsedText, ParsedMetadata, ChunkMetadata
 import pymupdf
 import tiktoken
 
-from src.vectorstores.vectordb import VectorStore
-from src.models import Document
+from src.vectorstores.vectordb import (
+    VectorStore,
+    PQAPineconeVectorStore,
+    PQARedisVectorStore,
+)
+from src.models import PQADocument
 
 # Configure logging to suppress paper-qa's API-related messages
 logging.getLogger("paper_qa").setLevel(logging.INFO)
@@ -52,19 +60,9 @@ local_llm_config = dict(
 )
 
 
-class DocumentProcessor:
-    """
-    Base class for document processors.
-    """
-
-    def process_document(self, doc: Union[os.PathLike, bytes, str, BytesIO]):
-        """
-        Main processing method for document ingestion into the application.
-        """
-        pass
-
-
-class PQADocumentProcessor(DocumentProcessor):
+# TODO: Add in logic for storing documents in cloud object storage
+# TODO: Add in logic for parsing metadata from documents
+class PQADocumentProcessor:
     """
     Handles document processing utilizing paperqa functionality along with custom
     logic.
@@ -80,7 +78,7 @@ class PQADocumentProcessor(DocumentProcessor):
     def __init__(
         self,
         pqa_settings: pqa.Settings,
-        vector_db: VectorStore,
+        vector_db: PQARedisVectorStore,
     ):
         """
         Initialize the document processor.
@@ -98,48 +96,80 @@ class PQADocumentProcessor(DocumentProcessor):
 
         self._settings = pqa_settings
         self._vector_db = vector_db
+        self._vector_db.connect()
 
-        # TODO: Check vector store connection
+    async def build_doc(
+        self, input: Union[os.PathLike, bytes, str, BytesIO]
+    ) -> PQADocument:
+        """Process a single document and return a BasicDoc object."""
+        try:
+            chunks = self.chunk_pdf(input)
+            embedding_model = self._settings.get_embedding_model()
+            embeddings = await embedding_model.embed_documents(chunks)
+            # TODO: Extract metadata from the document
+            # self.extract_metadata(embeddings)
 
-    def process_document(self, doc: Union[os.PathLike, bytes, str, BytesIO]):
+        except Exception as e:
+            logger.error(f"Error building document: {str(e)}", exc_info=True)
+            raise
+
+        return PQADocument(
+            text_chunks=chunks,
+            embeddings=embeddings,
+        )
+
+    async def process_documents(
+        self, input: List[Union[os.PathLike, bytes, str, BytesIO]]
+    ) -> list[str]:
         """
-        Process a document and store basic metadata.
+        Driver function for processing a list of documents and storing basic metadata.
 
         Parameters:
         -----------
-        doc: Union[os.PathLike, bytes, str, BytesIO]
-            Document to process. Uses paper-qa's read_doc function if a file path is
-            provided, otherwise custom processing is done.
+        input: List[Union[os.PathLike, bytes, str, BytesIO]]
+            List of documents to process.
         """
+        for _doc in input:
+            try:
+                doc = await self.build_doc(_doc)
+                keys = self._vector_db.add_texts_and_embeddings([doc])
+                logger.info(f"Added document with keys: {keys}")
+            except Exception as e:
+                logger.error(f"Error processing document {_doc}: {str(e)}\nSkipping...")
+                raise
 
-        pass
-
-    def process_documents(self, input: List[Union[os.PathLike, bytes, str, BytesIO]]):
-        pass
+        return keys
 
     @staticmethod
     def chunk_pdf(
         input: Union[os.PathLike, bytes, str, BytesIO],
         chunk_chars: int = 1500,
         overlap: int = 100,
-    ) -> list[Text]:
+    ) -> list[str]:
         """
         Chunk a PDF document into chunks of a given size. Uses paper-qa's chunk_pdf
         function for the actual chunking, but pagination is handled by either paperqa or
         custom logic depending on the input type.
         """
-        # fake doc
-        doc = Doc(docname="", citation="", dockey="fake_doc")
-        if isinstance(input, (os.PathLike, str)):
-            parsed_text = pqa_parse_pdf_to_pages(input)
-        elif isinstance(input, (bytes, BytesIO)):
-            parsed_text = PQADocumentProcessor.parse_pdf_bytes_to_pages(input)
-        else:
-            raise ValueError(f"Unsupported input type: {type(input)}")
+        # dummy doc object
+        doc = PQADoc(docname="", citation="", dockey="")
+        try:
+            if isinstance(input, (os.PathLike, str)):
+                parsed_text = pqa_parse_pdf_to_pages(input)
+            elif isinstance(input, (bytes, BytesIO)):
+                parsed_text = PQADocumentProcessor.parse_pdf_bytes_to_pages(input)
+            else:
+                raise ValueError(f"Unsupported input type: {type(input)}")
+        except Exception as e:
+            logger.error(f"Error chunking document: {str(e)}", exc_info=True)
+            raise
 
-        return pqa_chunk_pdf(
+        # We won't use the doc argument, but it's required by paper-qa's chunk_pdf
+        chunks: list[PQAText] = pqa_chunk_pdf(
             parsed_text=parsed_text, doc=doc, chunk_chars=chunk_chars, overlap=overlap
         )
+
+        return [chunk.text for chunk in chunks]
 
     @staticmethod
     def parse_pdf_bytes_to_pages(
@@ -193,19 +223,94 @@ class PQADocumentProcessor(DocumentProcessor):
 
         return ParsedText(content=pages, metadata=metadata)
 
-    def extract_document_metadata(
+    def extract_metadata(
         self,
-        text: ParsedText,
-        doc: Optional[Document] = None,
-        from_pages: Union[int, str, list[Union[int, str]]] = 1,
-    ) -> Document:
-
-        if doc is None:
-            doc = Document(
-                id=str(uuid.uuid4()),
-            )
+        embeddings: list[list[float]],
+    ):
 
         # TODO: Extract metadata from the document using LLM prompts first, as paperqa
         # does, then try additional methods for missing metadata.
 
         pass
+
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+load_dotenv()
+
+
+class PQAPineconeDocs(PQADocs):
+    """Extension of paperqa's Docs class that uses Pinecone for vector storage."""
+
+    def __init__(self, index_name: str, api_key: str, environment: str, **kwargs):
+        logger.info("Initializing PineconeDocs...")
+        try:
+            # Initialize with a custom texts_index
+            pinecone_store = PQAPineconeVectorStore(
+                index_name=index_name, api_key=api_key, environment=environment
+            )
+            logger.info("Successfully created PineconeVectorStore")
+
+            # Set the texts_index before calling super().__init__
+            kwargs["texts_index"] = pinecone_store
+
+            # Initialize the rest of the Docs class
+            super().__init__(**kwargs)
+            logger.info("Successfully initialized base Docs class")
+
+        except Exception as e:
+            logger.error(f"Error during initialization: {str(e)}", exc_info=True)
+            raise
+
+    async def aadd_texts(self, texts, doc, settings=None, embedding_model=None):
+        """Override aadd_texts to ensure proper indexing"""
+        logger.info(f"Adding {len(texts)} texts for document {doc.docname}")
+        try:
+            # Call parent implementation
+            result = await super().aadd_texts(texts, doc, settings, embedding_model)
+
+            if result:
+                logger.info(f"Successfully added document {doc.docname}")
+                logger.info(f"Current number of texts: {len(self.texts)}")
+                logger.info(f"Current size of texts_index: {len(self.texts_index)}")
+
+                # Ensure all texts are properly indexed
+                if len(self.texts) != len(self.texts_index):
+                    logger.info("Synchronizing texts index...")
+                    unindexed_texts = [
+                        t for t in self.texts if t not in self.texts_index
+                    ]
+                    if unindexed_texts:
+                        self.texts_index.add_texts_and_embeddings(unindexed_texts)
+                        logger.info(f"Added {len(unindexed_texts)} texts to index")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error in aadd_texts: {str(e)}", exc_info=True)
+            raise
+
+    async def aquery(self, query_text: str, **kwargs):
+        """Override aquery to ensure texts are indexed before querying"""
+        logger.info(f"Processing query: {query_text}")
+        try:
+            # Ensure all texts are indexed before querying
+            if len(self.texts) != len(self.texts_index):
+                logger.info("Synchronizing texts index before query...")
+                unindexed_texts = [t for t in self.texts if t not in self.texts_index]
+                if unindexed_texts:
+                    self.texts_index.add_texts_and_embeddings(unindexed_texts)
+                    logger.info(f"Added {len(unindexed_texts)} texts to index")
+
+            result = await super().aquery(query_text, **kwargs)
+
+            logger.info(f"Query completed with {len(result.contexts)} contexts")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error processing query: {str(e)}", exc_info=True)
+            raise

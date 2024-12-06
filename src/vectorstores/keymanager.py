@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from typing import Optional
 
 from redis import Redis
+from redis.commands.search.indexDefinition import IndexDefinition, IndexType
 
 
 class KeyManager(ABC):
@@ -95,28 +96,29 @@ class RedisKeyManager:
         self,
         redis_client: Redis,
         key_prefix: str,
+        index_name: str,
         counter_key: str,
         key_padding: int = 4,
     ):
-        """Initialize the key manager.
+        """Initialize the key manager from a Redis index definition and schema.
 
         Parameters
         ----------
         redis_client : Redis
             Redis client instance
-        key_prefix : str
+        index_definition : IndexDefinition
+            Index definition
+        index_schema : IndexType
+            Index schema
             Prefix for embedding chunk keys
         counter_key : str
             Redis key to store the current counter value
-        key_padding : int, optional
-            Number of digits to pad the key with, by default 4
         """
         self.redis = redis_client
         self.key_prefix = key_prefix
+        self.index_name = index_name
         self.counter_key = counter_key
         self.key_padding = key_padding
-
-        self._init()
 
     def _init(self) -> None:
         """Initialize the counter if it doesn't exist.
@@ -141,7 +143,7 @@ class RedisKeyManager:
         The numeric portion is zero-padded based on key_padding value.
         """
         next_id = self.redis.incr(self.counter_key)
-        return f"{self.key_prefix}:{next_id:0{self.key_padding}d}"
+        return f"{self.key_prefix}{next_id:0{self.key_padding}d}"
 
     def get_current_counter(self) -> int:
         """Get the current counter value without incrementing.

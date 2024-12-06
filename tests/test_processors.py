@@ -7,7 +7,7 @@ import numpy as np
 
 from src.config.config import ConfigurationManager
 from src.processors import PQADocumentProcessor
-from src.vectorstores.vectordb import LCRedisVectorStore
+from src.vectorstores.vectordb import LCRedisVectorStore, PQARedisVectorStore
 
 
 local_llm_config = dict(
@@ -66,5 +66,24 @@ def test_chunk_pdf(docs_list_bytes: list[bytes], pqa_settings: PQASettings):
     text_chunks: list[Text] = []
 
     text_chunks = PQADocumentProcessor.chunk_pdf(docs_list_bytes[0])
-    assert isinstance(text_chunks, list) and isinstance(text_chunks[0], Text)
     assert len(text_chunks) > 0
+    assert isinstance(text_chunks, list) and isinstance(text_chunks[0], str)
+
+
+@pytest.mark.asyncio
+async def test_process_documents(docs_list_bytes: list[bytes]):
+
+    local_pqaredis_vector_db = PQARedisVectorStore(redis_url="redis://localhost:6379")
+
+    pqa_settings = PQASettings(
+        llm="claude-3-5-sonnet-20240620",
+        llm_config=local_llm_config,
+        summary_llm="claude-3-5-sonnet-20240620",
+        summary_llm_config=local_llm_config,
+    )
+    processor = PQADocumentProcessor(pqa_settings, local_pqaredis_vector_db)
+
+    # Test processing a single document
+    keys = await processor.process_documents(docs_list_bytes)
+    print(keys)
+    assert len(keys) > 0

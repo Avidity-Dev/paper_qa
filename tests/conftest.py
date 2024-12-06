@@ -5,7 +5,7 @@ import pymupdf
 import pytest
 
 from src.config.config import ConfigurationManager
-from src.models import Document
+from src.models import PQADocument
 from src.processors import PQADocumentProcessor
 from src.vectorstores.vectordb import LCRedisVectorStore
 
@@ -89,9 +89,9 @@ def doc_embeddings(chunked_text_strings: list[list[str]]) -> list[list[float]]:
 
 
 @pytest.fixture
-def doc_objects(chunked_text_objects: list[list[Text]]) -> list[Document]:
+def doc_objects(chunked_text_objects: list[list[Text]]) -> list[PQADocument]:
     return [
-        Document(id=i, text_chunks=chunks)
+        PQADocument(id=i, text_chunks=chunks)
         for i, chunks in enumerate(chunked_text_objects)
     ]
 
