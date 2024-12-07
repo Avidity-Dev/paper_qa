@@ -114,7 +114,7 @@ async def main():
         logger.info(f"Size of texts_index: {len(docs.texts_index)}")
 
         # Execute query
-        query_text = "What is the main topic of the document?"
+        query_text = "How are CNNs used for siRNA prediction?"
         logger.info(f"Executing query: {query_text}")
         answer = await docs.aquery(query_text)
         
