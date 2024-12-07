@@ -936,7 +936,7 @@ class PQARedisVectorStore:
 
     async def max_marginal_relevance_search(
         self, query: str, k: int, fetch_k: int, embedding_model: PQAEmbeddingModel
-    ) -> tuple[Sequence[PQAEmbeddable], list[float]]:
+    ) -> tuple[Sequence[PQAText], list[float]]:
         """Vectorized implementation of Maximal Marginal Relevance (MMR) search.
 
         Args:

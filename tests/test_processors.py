@@ -83,7 +83,6 @@ async def test_process_documents(docs_list_bytes: list[bytes]):
     )
     processor = PQADocumentProcessor(pqa_settings, local_pqaredis_vector_db)
 
-    # Test processing a single document
     keys = await processor.process_documents(docs_list_bytes)
     print(keys)
     assert len(keys) > 0

@@ -2,12 +2,14 @@
 Document repository querying functionality.
 """
 
-from typing import Any
+from typing import Any, Optional
 
 from paperqa.docs import Docs as PQADocs
 from paperqa.settings import Settings as PQASettings
 from paperqa.settings import AnswerSettings as PQAAnswerSettings
-from paperqa.types import PQASession
+from paperqa.settings import PromptSettings as PQAPromptSettings
+from paperqa.settings import ParsingSettings as PQAParsingSettings
+from paperqa.types import PQASession, Text as PQAText
 
 from src.models import PQADocument
 from src.vectorstores.vectordb import VectorStore
@@ -32,39 +34,89 @@ class Querier:
 class PQAQuerier:
     """
     Query class to interrogate a document repository using functionality from paper-qa.
+
     """
 
     def __init__(
         self,
         vector_db: VectorStore,
         pqa_settings: PQASettings,
-        pqa_answer_settings: PQAAnswerSettings,
     ):
+        self._vector_db = vector_db
         self._pqa_settings = pqa_settings
-        self._pqa_answer_settings = pqa_answer_settings
-        self._pqa_docs = PQADocs(
-            texts_index=self._vector_db,
-        )
 
     @property
     def llm(self):
         return self._pqa_settings.get_llm()
 
     @property
+    def summary_llm(self):
+        return self._pqa_settings.get_summary_llm()
+
+    @property
     def embedding_model(self):
         return self._pqa_settings.get_embedding_model()
 
+    @property
+    def settings(self):
+        return self._pqa_settings
+
     async def mmr(self, query: str, **kwargs) -> Any:
-        return await self._pqa_docs.texts_index.max_marginal_relevance_search(
+        return await self._vector_db.max_marginal_relevance_search(
             query,
             k=kwargs.get("k", 10),
             fetch_k=kwargs.get("fetch_k", 100),
             embedding_model=self.embedding_model,
         )
 
-    async def query(self, query: str, **kwargs) -> Any:
-        # Get the results from the vector database, along with the embeddings
-        relevant_docs = await self.mmr(query, **kwargs)
+    async def query(self, query: str, **kwargs) -> PQASession:
+        """
+        Query the document repository.
+
+        Build a PQASession to inject context for query, instead of relying on the
+        internal call stack using by paper-qa, since we are persisting our document
+        metadata and embeddings externally.
+
+        Parameters
+        ----------
+        query : str
+            The query to ask the document repository.
+
+        Returns
+        -------
+        PQASession
+            _description_
+        """
+        session: PQASession
+        relevant_text_objects: list[PQAText]
+
+        # Get the relevant chunks and return text objects and similarity scores
+        relevant_text_objects, scores = await self.mmr(query, **kwargs)
+
+        # Setup the initial pqa objects to use for querying
+        # Inject the text objects into the docs object
+        docs = PQADocs()
+
+        # Dummy doc for now
+        # TODO: Add the actual doc metadata that's parsed during processing
+        doc = PQADocument(dockey="", citation="", docname="")
+        await docs.aadd_texts(relevant_text_objects, doc=doc)
+
+        session = PQASession(question=query)
+
+        # Generate the context objects and store in session
+        session = await docs.aget_evidence(
+            query=session,
+            settings=self._pqa_settings,
+            summary_llm_model=self.summary_llm,
+        )
 
         # Get the LLM to answer the question
-        return relevant_docs
+        session = await docs.aquery(
+            query=session,
+            settings=self.settings,
+            llm_model=self.llm,
+            summary_llm_model=self.summary_llm,
+        )
+
+        return session
