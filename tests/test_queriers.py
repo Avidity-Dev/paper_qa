@@ -7,7 +7,7 @@ from paperqa.settings import (
 )
 
 from src.query.queriers import PQAQuerier
-from src.vectorstores.stores import PQARedisVectorStore
+from src.storage.vector.stores.stores import PQARedisVectorStore
 
 # TODO: Turn this into a fixture and refactor all tests that use this.
 local_llm_config = dict(

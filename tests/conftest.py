@@ -9,7 +9,7 @@ import pytest
 from src.config.config import ConfigurationManager
 from src.models import PQADocument
 from src.process.processors import PQADocumentProcessor
-from src.vectorstores.stores import RedisVectorStore
+from src.storage.vector.stores import RedisVectorStore
 
 TEST_PDF_PATH = "tests/data/docs/"
 

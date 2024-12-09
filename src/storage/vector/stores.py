@@ -40,8 +40,8 @@ from redis.commands.search.indexDefinition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 
 from src.models import PQADocument
-from src.vectorstores.errors import EmbeddingError
-from src.vectorstores.keymanagers import KeyManager, RedisKeyManager
+from src.storage.vector.errors import EmbeddingError
+from src.storage.vector.keymanagers import KeyManager, RedisKeyManager
 
 ListOfDict = List[Dict[str, Any]]
 

@@ -9,7 +9,7 @@ import numpy as np
 
 from src.config.config import ConfigurationManager, INDEX_SCHEMA
 from src.process.processors import PQADocumentProcessor, PQAProcessor
-from src.vectorstores.stores import RedisVectorStore, PQARedisVectorStore
+from src.storage.vector.stores.stores import RedisVectorStore, PQARedisVectorStore
 
 dotenv.load_dotenv()
 

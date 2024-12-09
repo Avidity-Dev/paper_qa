@@ -9,8 +9,8 @@ from dataclasses import dataclass, Field
 from redis.commands.search.field import TextField, VectorField, NumericField
 from redis.commands.search.indexDefinition import IndexDefinition
 from src.models import PQADocument
-from src.vectorstores.keymanagers import RedisKeyManager
-from src.vectorstores.stores import (
+from src.storage.vector.stores.keymanagers import RedisKeyManager
+from src.storage.vector.stores.stores import (
     PQARedisVectorStore,
     RedisVectorStore,
 )

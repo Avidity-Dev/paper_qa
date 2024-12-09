@@ -9,7 +9,7 @@ from langchain_core.vectorstores import VectorStore as LCVectorStore
 from paperqa.types import Text as PQAText
 from paperqa.types import Doc as PQADoc
 
-from src.vectorstores.errors import PipelineError
+from src.storage.vector.errors import PipelineError
 
 # Set up logging
 logging.basicConfig(

@@ -29,7 +29,7 @@ from paperqa.types import ParsedText, ParsedMetadata, ChunkMetadata
 import pymupdf
 import tiktoken
 
-from src.vectorstores.stores import (
+from src.storage.vector.stores import (
     PQAPineconeVectorStore,
     PQARedisVectorStore,
 )
@@ -39,7 +39,7 @@ from src.process.metadata import (
     unpack_metadata,
     pqa_build_mla,
 )
-from src.vectorstores.converters import (
+from src.storage.vector.converters import (
     LCVectorStorePipeline,
     BaseVectorStorePipeline,
     TextStorageType,
