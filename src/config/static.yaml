@@ -1,0 +1,33 @@
+embedding_models:
+  openai-small:
+    name: "text-embedding-3-small"
+    model: "text-embedding-3-small"
+    dimension: 1536
+    endpoint: "https://api.openai.com/v1/embeddings"
+    provider: "openai"
+
+  openai-large:
+    name: "text-embedding-3-large"
+    model: "text-embedding-3-large"
+    dimension: 3072
+    endpoint: "https://api.openai.com/v1/embeddings"
+    provider: "openai"
+
+llm_models:
+  gpt-4o:
+    name: "gpt-4o-2024-08-06"
+    model: "gpt-4o"
+    temperature: 0.0
+    max_tokens: 4096
+    top_p: 1.0
+    endpoint: "https://api.openai.com/v1/chat/completions"
+    provider: "openai"
+
+  claude-3-5-sonnet:
+    name: "claude-3-5-sonnet-20240620"
+    model: "claude-3-5-sonnet"
+    temperature: 0.0
+    max_tokens: 4096
+    top_p: 1.0
+    endpoint: "https://api.anthropic.com/v1/messages"
+    provider: "anthropic"
