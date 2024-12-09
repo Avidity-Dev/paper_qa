@@ -77,7 +77,7 @@ class CloudObjectStore(ABC):
         pass
 
 
-class AWSS3Adapter(CloudObjectStore):
+class AWSS3Store(CloudObjectStore):
     """AWS S3 implementation of cloud storage adapter."""
 
     def __init__(
@@ -146,7 +146,7 @@ class AWSS3Adapter(CloudObjectStore):
             return False
 
 
-class AzureBlobAdapter(CloudObjectStore):
+class AzureBlobStore(CloudObjectStore):
     """Azure Blob Storage implementation of cloud storage adapter."""
 
     def __init__(
@@ -237,14 +237,14 @@ class CloudStorageFactory:
     ) -> CloudObjectStore:
         """Create a cloud storage adapter instance."""
         if provider == "aws":
-            return AWSS3Adapter(
+            return AWSS3Store(
                 bucket_name=config["bucket_name"],
                 aws_access_key_id=config.get("aws_access_key_id"),
                 aws_secret_access_key=config.get("aws_secret_access_key"),
                 region_name=config.get("region_name"),
             )
         elif provider == "azure":
-            return AzureBlobAdapter(
+            return AzureBlobStore(
                 connection_string=config["connection_string"],
                 container_name=config["container_name"],
             )

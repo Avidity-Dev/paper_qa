@@ -6,7 +6,7 @@ from paperqa.settings import (
     AnswerSettings as PQAAnswerSettings,
 )
 
-from src.queriers import PQAQuerier
+from src.query.queriers import PQAQuerier
 from src.vectorstores.stores import PQARedisVectorStore
 
 # TODO: Turn this into a fixture and refactor all tests that use this.

@@ -7,7 +7,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
-from src.cloudobjstore import CloudStorageFactory
+from src.storage.object.stores import CloudStorageFactory
 
 app = Flask(__name__)
 CORS(app)

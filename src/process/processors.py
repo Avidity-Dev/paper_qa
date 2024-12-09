@@ -39,7 +39,7 @@ from src.process.metadata import (
     unpack_metadata,
     pqa_build_mla,
 )
-from src.vectorstores.adapters import (
+from src.vectorstores.converters import (
     LCVectorStorePipeline,
     BaseVectorStorePipeline,
     TextStorageType,

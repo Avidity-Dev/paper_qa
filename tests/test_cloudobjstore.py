@@ -4,7 +4,7 @@ import os
 import dotenv
 import pytest
 
-from src.cloudobjstore import AzureBlobAdapter
+from src.storage.object.stores import AzureBlobAdapter
 
 dotenv.load_dotenv()
 
