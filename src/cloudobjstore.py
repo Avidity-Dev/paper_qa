@@ -15,7 +15,6 @@ from azure.storage.blob.aio import (
     ContainerClient as AsyncContainerClient,
 )
 from google.cloud import storage
-import pymupdf
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +149,11 @@ class AWSS3Adapter(CloudObjectStore):
 class AzureBlobAdapter(CloudObjectStore):
     """Azure Blob Storage implementation of cloud storage adapter."""
 
-    def __init__(self, connection_string: str, container_name: str):
+    def __init__(
+        self,
+        connection_string: str,
+        container_name: str,
+    ):
         """Initialize Azure Blob Storage client."""
         self.container_name = container_name
         self.connection_string = connection_string
@@ -206,20 +209,13 @@ class AzureBlobAdapter(CloudObjectStore):
             logger.error(f"Error downloading from Azure Blob: {str(e)}")
             raise
 
-    async def get_all_files(self) -> list[BytesIO]:
-        """Get all files from the container."""
-        files = []
-        blob_list = []
+    async def list_files(self) -> list[str]:
+        """List all files in the container."""
         await self._ensure_client()
-
+        blob_list = []
         async for blob in self.container_client.list_blobs():
             blob_list.append(blob)
-
-        for blob in blob_list:
-            file_name = blob.name
-            file_data = await self.download_file(file_name)
-            files.append(file_data)
-        return files
+        return blob_list
 
     async def delete_file(self, file_name: str) -> bool:
         try:
