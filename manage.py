@@ -110,7 +110,7 @@ class RedisManager:
             click.echo(f"Error clearing documents: {str(e)}")
 
     # TODO: Complete this function to fully populate the index with embeddings and metadata
-    def populate_index_from_dir(self, index_name: str, dir_path: str) -> None:
+    def populate_index_local_pdfs(self, index_name: str, dir_path: str) -> None:
         """Populates a Redis index from a directory of documents
 
         Notes
@@ -132,6 +132,9 @@ class RedisManager:
             api_key=os.getenv("OPENAI_API_KEY"),
         )
         doc_embeddings = embeddings.embed_documents(pdf_bytes)
+
+    def populate_index_from_cloud_pdfs(self, index_name: str, dir_path: str) -> None:
+        pass
 
 
 @click.group()

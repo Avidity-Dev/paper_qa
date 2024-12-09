@@ -10,7 +10,10 @@ from typing import BinaryIO, Optional, Dict, Any
 
 import aioboto3
 from azure.storage.blob import BlobClient, ContentSettings
-from azure.storage.blob.aio import BlobServiceClient
+from azure.storage.blob.aio import (
+    BlobServiceClient,
+    ContainerClient as AsyncContainerClient,
+)
 from google.cloud import storage
 import pymupdf
 
@@ -144,7 +147,7 @@ class AWSS3Adapter(CloudObjectStore):
             return False
 
 
-class AzureBlobAdapter(CloudStorageAdapter):
+class AzureBlobAdapter(CloudObjectStore):
     """Azure Blob Storage implementation of cloud storage adapter."""
 
     def __init__(self, connection_string: str, container_name: str):
@@ -203,6 +206,21 @@ class AzureBlobAdapter(CloudStorageAdapter):
             logger.error(f"Error downloading from Azure Blob: {str(e)}")
             raise
 
+    async def get_all_files(self) -> list[BytesIO]:
+        """Get all files from the container."""
+        files = []
+        blob_list = []
+        await self._ensure_client()
+
+        async for blob in self.container_client.list_blobs():
+            blob_list.append(blob)
+
+        for blob in blob_list:
+            file_name = blob.name
+            file_data = await self.download_file(file_name)
+            files.append(file_data)
+        return files
+
     async def delete_file(self, file_name: str) -> bool:
         try:
             await self._ensure_client()
@@ -236,18 +254,3 @@ class CloudStorageFactory:
             )
         else:
             raise ValueError(f"Unsupported storage provider: {provider}")
-
-
-# Example of how to download a file from Azure Blob Storage and open it with PyMuPDF
-blob = BlobClient.from_connection_string(
-    conn_str="my_connection_string",
-    container_name="my_container",
-    blob_name="my_blob",
-)
-
-with open("some-file.pdf", "wb") as my_blob:
-    blob_data = blob.download_blob()
-    blob_data.readinto(my_blob)
-
-# now open with PyMuPDF using the bytes object of "f"
-doc = pymupdf.open("pdf", my_blob.read())
