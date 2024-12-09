@@ -3,16 +3,42 @@ from enum import Enum
 from typing import Optional, Tuple
 
 
-from dataclasses import dataclass
+from dataclasses import dataclass, Field
 from typing import Optional, Dict, Any
 import yaml
 import os
 from functools import lru_cache
 
+from redis.commands.search.field import NumericField, TagField, TextField, VectorField
+from redis.commands.search.indexDefinition import IndexDefinition, IndexType
 
 # Set defaults for local dev but could change during deployment
 VEC_IDX_NAME = os.getenv("REDIS_INDEX_NAME", "idx:docs")
 VEC_IDX_PREFIX = os.getenv("REDIS_INDEX_PREFIX", "docs:")
+
+INDEX_SCHEMA: list[Field] = [
+    TextField("$.text", no_stem=True, as_name="text"),
+    TextField("$.name", no_stem=True, as_name="name"),
+    TextField("$.dockey", no_stem=True, as_name="dockey"),
+    TextField("$.doi", no_stem=True, as_name="doi"),
+    TextField("$.citation", no_stem=True, as_name="citation"),
+    TextField("$.journal", no_stem=True, as_name="journal"),
+    TextField("$.volume", no_stem=True, as_name="volume"),
+    TextField("$.issue", no_stem=True, as_name="issue"),
+    TextField("$.authors", no_stem=True, as_name="authors"),
+    NumericField("$.published_date", sortable=True, as_name="published_date"),
+    NumericField("$.created_at", sortable=True, as_name="created_at"),
+    VectorField(
+        "$.embedding",
+        "FLAT",
+        {
+            "TYPE": "FLOAT32",
+            "DIM": 1536,
+            "DISTANCE_METRIC": "COSINE",
+        },
+        as_name="embedding",
+    ),
+]
 
 
 class Environment(Enum):

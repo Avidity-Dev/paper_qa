@@ -20,7 +20,7 @@ import numpy as np
 import paperqa as pqa
 from paperqa.docs import Doc as PQADoc
 from paperqa.docs import Docs as PQADocs
-from paperqa.llms import VectorStore as PQAVectorStore
+from paperqa.llms import LiteLLMModel, EmbeddingModel
 from paperqa.utils import ImpossibleParsingError
 from paperqa.readers import chunk_pdf as pqa_chunk_pdf
 from paperqa.readers import parse_pdf_to_pages as pqa_parse_pdf_to_pages
@@ -29,18 +29,30 @@ from paperqa.types import ParsedText, ParsedMetadata, ChunkMetadata
 import pymupdf
 import tiktoken
 
-from src.vectorstores.vectordb import (
-    VectorStore,
+from src.vectorstores.stores import (
     PQAPineconeVectorStore,
     PQARedisVectorStore,
 )
 from src.models import PQADocument
+from src.process.metadata import (
+    pqa_extract_publication_metadata,
+    unpack_metadata,
+    pqa_build_mla,
+)
+from src.vectorstores.adapters import (
+    LCVectorStorePipeline,
+    BaseVectorStorePipeline,
+    TextStorageType,
+    LCVectorStore,
+)
 
-# Configure logging to suppress paper-qa's API-related messages
-logging.getLogger("paper_qa").setLevel(logging.INFO)
+# Set up logging
 logging.basicConfig(
-    level=logging.INFO, stream=sys.stdout
-)  # Changed from paperqa to paper_qa
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    stream=sys.stdout,
+)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -222,25 +234,6 @@ class PQADocumentProcessor:
 
         return ParsedText(content=pages, metadata=metadata)
 
-    def extract_metadata(
-        self,
-        embeddings: list[list[float]],
-    ):
-
-        # TODO: Extract metadata from the document using LLM prompts first, as paperqa
-        # does, then try additional methods for missing metadata.
-
-        pass
-
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
-
-load_dotenv()
-
 
 class PQAPineconeDocs(PQADocs):
     """Extension of paperqa's Docs class that uses Pinecone for vector storage."""
@@ -313,3 +306,188 @@ class PQAPineconeDocs(PQADocs):
         except Exception as e:
             logger.error(f"Error processing query: {str(e)}", exc_info=True)
             raise
+
+
+class PQAProcessor:
+    """
+    Handles document processing utilizing paperqa functionality along with custom
+    logic.
+
+    Attributes:
+    -----------
+    pqa_settings: pqa.Settings
+        Paper-qa settings object used to configure processing behavior.
+    vector_db: VectorStore
+        Vector database to store document embeddings
+    """
+
+    def __init__(
+        self,
+        pqa_settings: pqa.Settings,
+        vector_store_pipeline: BaseVectorStorePipeline = LCVectorStorePipeline(),
+    ):
+        """
+        Initialize the document processor.
+
+        Parameters:
+        -----------
+        pqa_settings: pqa.Settings
+            Paper-qa settings object used to configure processing behavior.
+        vector_db: VectorStore
+            VectorStore object to store document embeddings.
+        """
+        # Suppress warnings about missing APIs
+        warnings.filterwarnings("ignore", message=".*API.*")
+        warnings.filterwarnings("ignore", message=".*Provider.*")
+
+        self._settings: pqa.Settings = pqa_settings
+        self._llm: LiteLLMModel = self.llm
+        self._vector_store_pipeline: BaseVectorStorePipeline = vector_store_pipeline
+
+    @property
+    def llm(self) -> LiteLLMModel:
+        """Get the LLM model."""
+        return self._settings.get_llm()
+
+    @property
+    def embedding_model(self) -> EmbeddingModel:
+        """Get the embedding model."""
+        return self._settings.get_embedding_model()
+
+    @property
+    def vector_store_pipeline(self) -> BaseVectorStorePipeline:
+        """Get the vector store pipeline."""
+        return self._vector_store_pipeline
+
+    @property
+    def vector_store(self) -> LCVectorStore:
+        """Get the underlying vector store for operations that do not require
+        document type conversion.
+        """
+        return self._vector_store_pipeline.vector_store
+
+    async def extract_metadata(self, text: str, metadata_keys: list[str]) -> dict:
+        """Extract metadata from a text input."""
+
+        metadata = await pqa_extract_publication_metadata(
+            text=text, metadata_keys=metadata_keys, llm=self.llm
+        )
+        metadata["citation"] = await pqa_build_mla(llm=self.llm, metadata=metadata)
+
+        return metadata
+
+    async def process_documents(
+        self,
+        input: List[Union[os.PathLike, bytes, str, BytesIO]],
+        metadata_keys: list[str],
+    ) -> list[str]:
+        """
+        Driver function for processing a list of documents and storing basic metadata.
+
+        Parameters:
+        -----------
+        input: List[Union[os.PathLike, bytes, str, BytesIO]]
+            List of documents to process.
+        """
+        for doc in input:
+            try:
+                chunks = self.chunk_pdf(doc)
+                embeddings = await self.embedding_model.embed_documents(chunks)
+
+                # Extract metadata from the first two chunks
+                chunk = " ".join(chunks[0:2])
+                metadata = await self.extract_metadata(chunk, metadata_keys)
+                metadata = [metadata] * len(chunks)
+
+                keys = await self.vector_store_pipeline.add_texts(
+                    chunks, metadatas=metadata, embeddings=embeddings
+                )
+                logger.info(f"Added document with keys: {keys}")
+            except Exception as e:
+                logger.error(f"Error processing document {doc}: {str(e)}\nSkipping...")
+                continue
+
+        return keys
+
+    @staticmethod
+    def chunk_pdf(
+        input: Union[os.PathLike, bytes, str, BytesIO],
+        chunk_chars: int = 1500,
+        overlap: int = 100,
+    ) -> list[str]:
+        """
+        Chunk a PDF document into chunks of a given size. Uses paper-qa's chunk_pdf
+        function for the actual chunking, but pagination is handled by either paperqa or
+        custom logic depending on the input type.
+        """
+        # dummy doc object
+        doc = PQADoc(docname="", citation="", dockey="")
+        try:
+            if isinstance(input, (os.PathLike, str)):
+                parsed_text = pqa_parse_pdf_to_pages(input)
+            elif isinstance(input, (bytes, BytesIO)):
+                parsed_text = PQADocumentProcessor.parse_pdf_bytes_to_pages(input)
+            else:
+                raise ValueError(f"Unsupported input type: {type(input)}")
+        except Exception as e:
+            logger.error(f"Error chunking document: {str(e)}", exc_info=True)
+            raise
+
+        # We won't use the doc argument, but it's required by paper-qa's chunk_pdf
+        chunks: list[PQAText] = pqa_chunk_pdf(
+            parsed_text=parsed_text, doc=doc, chunk_chars=chunk_chars, overlap=overlap
+        )
+
+        return [chunk.text for chunk in chunks]
+
+    @staticmethod
+    def parse_pdf_bytes_to_pages(
+        input: Union[bytes, BytesIO], page_size_limit: int | None = None
+    ) -> ParsedText:
+        """
+        Parse a PDF within a byte stream the `ParsedText` paperqa object.
+
+        Nearly identical to paper-qa's parse_pdf_to_pages function, but handles bytes
+        instead of a file path.
+
+        Parameters
+        ----------
+        input : Union[bytes, BytesIO]
+            Byte stream of a PDF document.
+
+        Returns
+        -------
+        ParsedText
+            Paper-qa object containing the parsed PDF document.
+        """
+
+        with pymupdf.open(stream=input, filetype="pdf") as pdf:
+            pages: dict[int, str] = {}
+            total_length = 0
+
+            for i in range(pdf.page_count):
+                try:
+                    page = pdf.load_page(i)
+                except pymupdf.mupdf.FzErrorFormat as exc:
+                    raise ImpossibleParsingError(
+                        f"Page loading via {pymupdf.__name__} failed on page {i} of"
+                        f" {pdf.page_count} for the PDF bytes stream."
+                    ) from exc
+                text = page.get_text("text", sort=True)
+                if page_size_limit and len(text) > page_size_limit:
+                    raise ImpossibleParsingError(
+                        f"The text in page {i} of {pdf.page_count} was {len(text)} chars"
+                        f" long, which exceeds the {page_size_limit} char limit for the PDF"
+                        f" bytes stream."
+                    )
+                pages[str(i + 1)] = text
+                total_length += len(text)
+
+        metadata = ParsedMetadata(
+            parsing_libraries=[f"pymupdf {pymupdf.__version__}"],
+            paperqa_version=pqa.__version__,
+            total_parsed_text_length=total_length,
+            parse_type="pdf_bytes",
+        )
+
+        return ParsedText(content=pages, metadata=metadata)

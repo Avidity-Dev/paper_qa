@@ -40,3 +40,46 @@ class PQADocument(PQADoc, BaseModel):
         """
         out = {k: v for k, v in self.__dict__.items() if k != "text_chunks"}
         return out
+
+
+class DocumentMetadata(BaseModel):
+    """
+    Data model for metadata extracted from a research paper.
+    """
+
+    title: str | None = None
+    authors: list[str] | None = None
+    doi: str | None = None
+    published_date: datetime | None = None
+    citation: str | None = None
+    journal: str | None = None
+    volume: str | None = None
+    issue: str | None = None
+
+
+class DocumentChunk(BaseModel):
+    """
+    Data model for a chunk of a research paper.
+    """
+
+    id: str | None = None
+    key: str | None = None
+    text: str | None = None
+    pages: list[int] | None = None
+    embedding: list[float] | None = None
+    metadata: DocumentMetadata | None = None
+
+    def to_dict(self, embedding: bool = False) -> dict:
+        """Return a dictionary representation of the DocumentChunk object.
+
+        Parameters:
+        -----------
+        embedding: bool, optional
+            Whether to include the embedding in the dictionary, by default False
+        """
+        out = {**self.model_dump(), **self.metadata.model_dump()}
+        if embedding:
+            return out
+        else:
+            del out["embedding"]
+            return out

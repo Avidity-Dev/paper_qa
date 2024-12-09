@@ -1,5 +1,5 @@
 text:
-  - name: text_chunks
+  - name: text
     weight: 1.0
     no_stem: false
     sortable: false
@@ -7,18 +7,27 @@ text:
     weight: 1.0
     no_stem: false
     sortable: false
-  - name: id
+  - name: dockey
     weight: 1.0
     no_stem: true
   - name: doi
     weight: 1.0
     no_stem: true
-
-tag:
+  - name: citation
+    weight: 1.0
+    no_stem: true
+  - name: journal
+    weight: 1.0
+    no_stem: true
+  - name: volume
+    weight: 1.0
+    no_stem: true
+  - name: issue
+    weight: 1.0
+    no_stem: true
   - name: authors
-    separator: "|"
-    case_sensitive: false
-    sortable: false
+    weight: 1.0
+    no_stem: true
 
 numeric:
   - name: published_date
@@ -27,12 +36,12 @@ numeric:
     sortable: true
 
 vector:
-  - name: embeddings
-    algorithm: FLAT
+  - name: embedding
+    type: FLAT
     dims: 1536
     datatype: FLOAT32
     distance_metric: COSINE
     initial_cap: 1000
 
-content_key: text_chunks
-content_vector_key: embeddings
+content_key: text
+content_vector_key: embedding

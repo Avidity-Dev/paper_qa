@@ -6,8 +6,8 @@ import pytest
 import dotenv
 from dataclasses import dataclass
 from src.models import PQADocument
-from src.vectorstores.keymanager import RedisKeyManager
-from src.vectorstores.vectordb import LCRedisVectorStore, PQARedisVectorStore
+from src.vectorstores.keymanagers import RedisKeyManager
+from src.vectorstores.stores import LCRedisVectorStore, PQARedisVectorStore
 
 
 def get_matching_doc_ids(

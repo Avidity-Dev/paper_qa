@@ -12,7 +12,7 @@ from paperqa.settings import ParsingSettings as PQAParsingSettings
 from paperqa.types import PQASession, Text as PQAText
 
 from src.models import PQADocument
-from src.vectorstores.vectordb import VectorStore
+from src.vectorstores.stores import VectorStore
 
 
 class Querier:

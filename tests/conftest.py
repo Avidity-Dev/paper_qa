@@ -6,8 +6,8 @@ import pytest
 
 from src.config.config import ConfigurationManager
 from src.models import PQADocument
-from src.processors import PQADocumentProcessor
-from src.vectorstores.vectordb import LCRedisVectorStore
+from src.process.processors import PQADocumentProcessor
+from src.vectorstores.stores import RedisVectorStore
 
 TEST_PDF_PATH = "tests/data/docs/"
 
@@ -41,16 +41,16 @@ def index_schema_dict() -> dict:
     }
 
 
-@pytest.fixture
-def local_redis_vector_db(index_schema_dict: dict) -> LCRedisVectorStore:
-    return LCRedisVectorStore(
-        redis_url="redis://localhost:6379",
-        index_name="idx:docs_vss",
-        key_prefix="docs",
-        index_schema=index_schema_dict,
-        counter_key="docs_ctr",
-        key_padding=4,
-    )
+# @pytest.fixture
+# def local_redis_vector_db(index_schema_dict: dict) -> RedisVectorStore:
+#     return RedisVectorStore(
+#         redis_url="redis://localhost:6379",
+#         index_name="idx:docs_vss",
+#         key_prefix="docs",
+#         index_schema=index_schema_dict,
+#         counter_key="docs_ctr",
+#         key_padding=4,
+#     )
 
 
 @pytest.fixture

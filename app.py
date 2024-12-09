@@ -1,7 +1,7 @@
 import streamlit as st
 import openai
 import os
-from src.document_processor import DocumentProcessor
+from src.processors import DocumentProcessor
 import tempfile
 from dotenv import load_dotenv
 from src.config.manager import config

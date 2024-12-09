@@ -119,6 +119,7 @@ class RedisKeyManager:
         self.index_name = index_name
         self.counter_key = counter_key
         self.key_padding = key_padding
+        self._init()
 
     def _init(self) -> None:
         """Initialize the counter if it doesn't exist.
@@ -192,13 +193,14 @@ class RedisKeyManager:
         Uses Redis INCRBY for atomic batch increment operation.
         Keys are generated sequentially starting from the next available ID.
         """
-        new_counter = self.redis.incrby(self.counter_key, batch_size)
-        start_id = new_counter - batch_size + 1
+        curr_ctr = self.get_current_counter()
+        new_ctr = self.redis.incrby(self.counter_key, batch_size)
+        start_id = curr_ctr + 1
 
         print(f"Padding type: {type(self.key_padding)}")
         print(f"Padding value: {self.key_padding}")
 
-        key_num_strs = [str(i) for i in range(start_id, new_counter + 1)]
+        key_num_strs = [str(i) for i in range(start_id, new_ctr + 1)]
         key_nums = [key_num_str.zfill(self.key_padding) for key_num_str in key_num_strs]
 
         return [f"{self.key_prefix}:{key_num}" for key_num in key_nums]

@@ -3,12 +3,15 @@ import pytest
 from paperqa.types import ParsedText, Text
 from paperqa.settings import Settings as PQASettings
 from unittest.mock import MagicMock, patch
+
+import dotenv
 import numpy as np
 
-from src.config.config import ConfigurationManager
-from src.processors import PQADocumentProcessor
-from src.vectorstores.vectordb import LCRedisVectorStore, PQARedisVectorStore
+from src.config.config import ConfigurationManager, INDEX_SCHEMA
+from src.process.processors import PQADocumentProcessor, PQAProcessor
+from src.vectorstores.stores import RedisVectorStore, PQARedisVectorStore
 
+dotenv.load_dotenv()
 
 local_llm_config = dict(
     model_list=[
@@ -35,7 +38,7 @@ def pqa_settings() -> PQASettings:
 
 
 @pytest.fixture
-def mock_vector_db() -> LCRedisVectorStore:
+def mock_vector_db() -> RedisVectorStore:
     """Create a mock LCRedisVectorStore that avoids Redis connection."""
     mock_redis = MagicMock()
     mock_embeddings = MagicMock()
@@ -45,7 +48,7 @@ def mock_vector_db() -> LCRedisVectorStore:
         "langchain_community.vectorstores.Redis.from_existing_index"
     ) as mock_from_existing:
         mock_from_existing.return_value = mock_redis
-        vector_store = LCRedisVectorStore(
+        vector_store = RedisVectorStore(
             redis_url="mock://localhost:6379",
             index_name="test_index",
             embedding=mock_embeddings,
@@ -53,6 +56,17 @@ def mock_vector_db() -> LCRedisVectorStore:
         vector_store._redis = mock_redis
         vector_store.key_manager = mock_key_manager
         return vector_store
+
+
+def test_build_index():
+    schema = os.getenv("REDIS_VECTOR_CONFIG")
+    local_vector_db = RedisVectorStore(
+        redis_url="redis://localhost:6379",
+        index_name="idx:docs",
+        key_prefix="doc:",
+        embedding=None,
+        schema=INDEX_SCHEMA,
+    )
 
 
 def test_parse_pdf_bytes_to_pages(docs_list_bytes: list[bytes]):
@@ -86,3 +100,16 @@ async def test_process_documents(docs_list_bytes: list[bytes]):
     keys = await processor.process_documents(docs_list_bytes)
     print(keys)
     assert len(keys) > 0
+
+
+@pytest.mark.asyncio
+async def test_process_documents_v2(docs_list_bytes: list[bytes]):
+    local_vector_db = RedisVectorStore(
+        redis_url="redis://localhost:6379",
+        index_name="idx:docs",
+        key_prefix="doc:",
+        embedding=None,
+    )
+    local_vector_db.build_index()
+
+    pass

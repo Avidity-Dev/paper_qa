@@ -17,12 +17,13 @@ import uuid
 
 from langchain_community.vectorstores import Pinecone
 from langchain_community.vectorstores.redis import Redis
+from langchain_community.vectorstores.redis.base import _prepare_metadata
 from langchain_community.vectorstores.redis.filters import RedisFilterExpression
 from langchain_community.vectorstores.redis.schema import RedisModel, read_schema
 from langchain_core.documents import Document, Document as LCDocument
 from langchain_core.embeddings import Embeddings
 from langchain_core.runnables.config import run_in_executor
-from langchain_core.vectorstores import VectorStore, VectorStore as LCVectorStore
+from langchain_core.vectorstores import VectorStore as LCVectorStore
 from langchain_openai import OpenAIEmbeddings
 import numpy as np
 import pandas as pd
@@ -39,6 +40,7 @@ from redis.commands.search.indexDefinition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 
 from src.models import PQADocument
+from src.vectorstores.errors import EmbeddingError
 from src.vectorstores.keymanagers import KeyManager, RedisKeyManager
 
 ListOfDict = List[Dict[str, Any]]
@@ -81,8 +83,8 @@ class RedisIndexBuilder(IndexBuilder):
         vector_dim: int,
         distance_metric: str,
         algorithm: str,
-        algorithm_params: Dict[str, Any],
-        schema: Optional[Union[Dict[str, Any], str, os.PathLike]],
+        schema: Optional[Union[Dict[str, Any], str, os.PathLike, list[Field]]],
+        algorithm_params: Optional[Dict[str, Any]] = None,
         recreate_index: bool = False,
     ):
         """
@@ -117,7 +119,7 @@ class RedisIndexBuilder(IndexBuilder):
         self.vector_dim = vector_dim
         self.distance_metric = distance_metric.upper()
         self.algorithm = algorithm.upper()
-        self.algorithm_params = algorithm_params or {}
+        self.algorithm_params = algorithm_params
         self.schema = schema
         self.recreate_index = recreate_index
 
@@ -126,6 +128,8 @@ class RedisIndexBuilder(IndexBuilder):
                 f"Unsupported algorithm '{self.algorithm}'. "
                 "Redis supports 'FLAT' or 'HNSW' for vector search."
             )
+
+        logger.info(f"Store type: {self.store_type}")
 
     def build_index(self, **kwargs: Any) -> RedisModel:
         """
@@ -143,47 +147,15 @@ class RedisIndexBuilder(IndexBuilder):
         RedisModel
             The RedisModel built from the schema.
         """
-        # Parse the schema using community utilities
-        parsed_schema = read_schema(self.schema) if self.schema else {}
 
-        # Initialize RedisModel from parsed schema
-        model = RedisModel(**parsed_schema)
-        model.add_content_field()  # Ensure content field exists
-
-        # Check if a vector field already exists, if not add one
         try:
-            model.content_vector
-            logger.info(f"Vector field already exists: {model.content_vector_key}\n")
-        except ValueError:
-            # If no vector field, add one
-            vector_field = {
-                "name": model.content_vector_key,
-                "algorithm": self.algorithm,
-                "dims": self.vector_dim,
-                "distance_metric": self.distance_metric,
-                "datatype": "FLOAT32",  # default to FLOAT32
-            }
-            # Merge algorithm_params if provided
-            if self.algorithm_params:
-                for k, v in self.algorithm_params.items():
-                    # These must match the HNSW or FLAT params naming in Redis
-                    vector_field[k] = v
-
-            model.add_vector_field(vector_field)
-
-        # Optionally recreate index if requested
-        if self.recreate_index:
-            try:
-                self.redis_client.ft(self.index_name).dropindex(delete_documents=True)
-                logger.info(f"Dropped existing index: {self.index_name}")
-            except Exception:
-                pass
+            self.redis_client.ft(self.index_name).dropindex(delete_documents=True)
+            logger.info(f"Dropped existing index: {self.index_name}")
+        except Exception:
+            pass
 
         # Check if index already exists
         if not self._index_exists():
-            # Create the index fields
-            fields = model.get_fields()
-
             # Determine index type based on store_type
             index_type = IndexType.JSON if self.store_type == "json" else IndexType.HASH
 
@@ -194,13 +166,13 @@ class RedisIndexBuilder(IndexBuilder):
 
             # Create the index
             self.redis_client.ft(self.index_name).create_index(
-                fields, definition=definition
+                fields=self.schema, definition=definition
             )
             logger.info(f"Created index: {self.index_name}")
         else:
-            logger.debug(f"Index {self.index_name} already exists. Skipping creation.")
+            logger.info(f"Index {self.index_name} already exists. Skipping creation.")
 
-        return model
+        return self.schema
 
     def _index_exists(self) -> bool:
         """Check if a Redis index already exists."""
@@ -211,7 +183,25 @@ class RedisIndexBuilder(IndexBuilder):
             return False
 
 
-class RedisVectorStore(VectorStore):
+class BaseVectorStore(Protocol):
+    """Contract for a vector store in this application to allow for the implementations
+    to be swapped out for different vector databases.
+    """
+
+    def add_texts(self, texts: List[str], **kwargs: Any) -> List[str]: ...
+
+    def delete(
+        self, ids: Optional[list[str]] = None, **kwargs: Any
+    ) -> Optional[bool]: ...
+
+    def search(
+        self, query_embedding: list[float], k: int, search_type: str
+    ) -> List[Any]: ...
+
+    def add_documents(self, documents: List[Any], **kwargs: Any) -> List[str]: ...
+
+
+class RedisVectorStore(LCVectorStore, BaseVectorStore):
     """
     A Redis-based vector store inspired by the LangChain Community RedisVectorStore.
 
@@ -231,27 +221,71 @@ class RedisVectorStore(VectorStore):
     def __init__(
         self,
         redis_url: str,
-        embedding: Embeddings,
+        embedding: Optional[Embeddings] = None,
         index_name: str = "idx:doc_index",
         key_prefix: str = "doc:",
+        counter_keyname: str = "doc_counter",
         vector_dim: int = 1536,
         distance_metric: str = "COSINE",
-        store_type: str = "hash",
+        store_type: str = "JSON",
         algorithm: str = "FLAT",
         algorithm_params: Optional[Dict[str, Any]] = None,
         schema: Optional[Union[Dict[str, Any], str, os.PathLike]] = None,
-        index_builder: Optional[IndexBuilder] = None,
         redis_username: Optional[str] = None,
         redis_password: Optional[str] = None,
         recreate_index: bool = False,
         **kwargs: Any,
     ):
+        """
+        Initialize the RedisVectorStore.
+
+        Parameters
+        ----------
+        redis_url : str
+            The URL of the Redis server.
+        embedding : Optional[Embeddings], optional
+            The embedding model to use for encoding documents.
+        index_name : _type_, optional
+            The name of the Redis index.
+        key_prefix : str, optional
+            The prefix for the keys in the Redis index.
+        counter_keyname : str, optional
+            The name of the Redis key to store the counter.
+        vector_dim : int, optional
+            The dimensionality of the embedding vectors.
+        distance_metric : str, optional
+            The distance metric to use for vector search.
+        store_type : str, optional
+            _description_, by default "hash"
+        algorithm : str, optional
+            The vector indexing algorithm to use.
+        algorithm_params : Optional[Dict[str, Any]], optional
+            Additional parameters for the vector indexing algorithm.
+        schema : Optional[Union[Dict[str, Any], str, os.PathLike]], optional
+            _description_, by default None
+        index_builder : Optional[IndexBuilder], optional
+            The index builder to use for creating the Redis index.
+        redis_username : Optional[str], optional
+            The username for the Redis server.
+        redis_password : Optional[str], optional
+            The password for the Redis server.
+        recreate_index : bool, optional
+            Whether to recreate the Redis index if it already exists.
+
+        Raises
+        ------
+        ValueError
+            If the algorithm is not supported.
+        ValueError
+            If the number of ids does not match the number of texts.
+        """
         self.redis_url = redis_url
         self.index_name = index_name
         self.key_prefix = key_prefix
+        self.counter_keyname = counter_keyname
         self.vector_dim = vector_dim
         self.distance_metric = distance_metric
-        self._embeddings = embedding
+        self._embedding_model = embedding
         self.store_type = store_type.lower()
         self._model: Optional[RedisModel] = None
 
@@ -268,8 +302,7 @@ class RedisVectorStore(VectorStore):
             self.redis_url, username=redis_username, password=redis_password
         )
 
-        # If no index builder is provided, use RedisIndexBuilder by default
-        self.index_builder = index_builder or RedisIndexBuilder(
+        self.index_builder = RedisIndexBuilder(
             redis_client=self.redis_client,
             index_name=self.index_name,
             key_prefix=self.key_prefix,
@@ -282,14 +315,21 @@ class RedisVectorStore(VectorStore):
             recreate_index=recreate_index,
         )
 
+        self.key_manager = RedisKeyManager(
+            redis_client=self.redis_client,
+            index_name=self.index_name,
+            key_prefix=self.key_prefix,
+            counter_key=self.counter_keyname,
+        )
+
         # Build the index and get the RedisModel
         self._model = self.index_builder.build_index()
         if not isinstance(self.index_builder, RedisIndexBuilder):
             raise ValueError("IndexBuilder must be a RedisIndexBuilder or compatible.")
 
     @property
-    def embeddings(self) -> Optional[Embeddings]:
-        return self._embeddings
+    def embedding_model(self) -> Optional[Embeddings]:
+        return self._embedding_model
 
     def delete(self, ids: Optional[list[str]] = None, **kwargs: Any) -> Optional[bool]:
         if ids is None:
@@ -302,28 +342,27 @@ class RedisVectorStore(VectorStore):
             self.redis_client.delete(doc_id)
         return True
 
-    def add_texts(
+    async def add_texts(
         self,
         texts: List[str],
         metadatas: Optional[List[dict]] = None,
         *,
-        ids: Optional[List[str]] = None,
         batch_size: int = 1000,
         **kwargs: Any,
     ) -> List[str]:
         if metadatas and len(metadatas) != len(texts):
             raise ValueError("Number of metadatas must match number of texts.")
-        if ids and len(ids) != len(texts):
-            raise ValueError("Number of ids must match number of texts.")
 
-        embeddings = self._embeddings.embed_documents(texts)
-        keys = []
+        if "embeddings" not in kwargs:
+            kwargs["embeddings"] = await self.embedding_model.embed_documents(texts)
+        else:
+            embeddings = kwargs["embeddings"]
+
+        keys = self.key_manager.generate_batch_keys(len(texts))
         pipeline = self.redis_client.pipeline(transaction=False)
 
         for i, text in enumerate(texts):
-            doc_id = (
-                ids[i] if (ids and ids[i]) else f"{self.key_prefix}{uuid.uuid4().hex}"
-            )
+            doc_id = keys[i]
             metadata = metadatas[i] if metadatas else {}
             # Clean and prepare metadata fields according to Redis indexing rules
             clean_meta = _prepare_metadata(metadata)
@@ -336,7 +375,10 @@ class RedisVectorStore(VectorStore):
                     self._model.content_key: text,
                     self._model.content_vector_key: embedding.tolist(),
                 }
-                # Add metadata fields
+                # Remove the already added keys from the metadata
+                for k in [self._model.content_key, self._model.content_vector_key]:
+                    clean_meta.pop(k, None)
+
                 for k, v in clean_meta.items():
                     doc_json[k] = v
                 pipeline.json().set(doc_id, "$", doc_json)
@@ -350,8 +392,6 @@ class RedisVectorStore(VectorStore):
                 for k, v in clean_meta.items():
                     mapping[k] = v
                 pipeline.hset(doc_id, mapping=mapping)
-
-            keys.append(doc_id)
 
             if i % batch_size == 0:
                 pipeline.execute()
@@ -383,9 +423,13 @@ class RedisVectorStore(VectorStore):
         )
 
     def similarity_search_with_score(
-        self, query: str, k: int = 4, **kwargs: Any
+        self, query: Union[str, List[float]], k: int = 4, **kwargs: Any
     ) -> List[Tuple[Document, float]]:
-        query_embedding = self._embeddings.embed_query(query)
+        # If the query is a string, we need to embed it. Otherwise, we assume that the
+        # query is already an embedding.
+        query_embedding: List[float] = (
+            self.embedding_model.embed_query(query) if isinstance(query, str) else query
+        )
         res = self._run_knn_query(query_embedding, k)
 
         docs = []
@@ -427,13 +471,13 @@ class RedisVectorStore(VectorStore):
         return docs
 
     async def asimilarity_search(
-        self, query: str, k: int = 4, **kwargs: Any
+        self, query: Union[str, List[float]], k: int = 4, **kwargs: Any
     ) -> List[Document]:
         docs_with_scores = await self.asimilarity_search_with_score(query, k, **kwargs)
         return [doc for doc, _ in docs_with_scores]
 
     def similarity_search(
-        self, query: str, k: int = 4, **kwargs: Any
+        self, query: Union[str, List[float]], k: int = 4, **kwargs: Any
     ) -> List[Document]:
         docs_with_scores = self.similarity_search_with_score(query, k=k, **kwargs)
         return [doc for doc, _ in docs_with_scores]
@@ -473,20 +517,34 @@ class RedisVectorStore(VectorStore):
 
     def max_marginal_relevance_search(
         self,
-        query: str,
+        query: Union[str, List[float]],
         k: int = 4,
         fetch_k: int = 20,
         lambda_mult: float = 0.5,
+        embedding_model: Optional[Embeddings] = None,
         **kwargs: Any,
     ) -> List[Document]:
+
+        # If the query is a string, we need to embed it. If the store instance has no
+        # embedding model, then an embedding model must be passed in the kwargs.
+        try:
+            if isinstance(query, str):
+                query_embedding = embedding_model.embed_query(query)
+            else:
+                query_embedding = query
+        except:
+            raise EmbeddingError(
+                "Failed to embed query. If a query string is provided, ensure that "
+                "the embedding model is correctly configured within the instance or "
+                "provided in the kwargs."
+            )
+
         docs_with_scores = self.similarity_search_with_score(query, k=fetch_k, **kwargs)
         if not docs_with_scores:
             return []
 
         docs = [d for d, _ in docs_with_scores]
-        query_embedding = np.array(
-            self._embeddings.embed_query(query), dtype=np.float32
-        )
+
         doc_texts = [d.page_content for d in docs]
         doc_embeddings = np.array(
             self._embeddings.embed_documents(doc_texts), dtype=np.float32
@@ -597,7 +655,7 @@ class PQAPineconeVectorStore(PQAVectorStore, BaseModel):
             environment: Pinecone environment
         """
         super(BaseModel, self).__init__()
-        super(VectorStore, self).__init__()
+        super(PQAVectorStore, self).__init__()
         self.pc = Pinecone(api_key=api_key)
         self.index = self.pc.Index(index_name)
         self.texts = []
@@ -812,11 +870,7 @@ class PQARedisVectorStore:
             prefix=[key_prefix], index_type=self.index_type
         )
         self.redis_client = redis.from_url(self.redis_url)
-        self.create_index(
-            self.index_name,
-            self.index_definition,
-            self.index_schema,
-        )
+
         self.key_manager = RedisKeyManager(
             redis_client=self.redis_client,
             index_name=self.index_name,
@@ -828,12 +882,11 @@ class PQARedisVectorStore:
     def index_definition(self) -> IndexDefinition:
         return self._index_definition
 
-    @classmethod
     def create_index(
-        cls,
+        self,
         index_name: str,
-        index_definition: Optional[IndexDefinition] = None,
-        index_schema: list[Field] = DEFAULT_INDEX_SCHEMA,
+        index_definition: IndexDefinition,
+        index_schema: list[Field],
     ) -> None:
         """Create a Redis index with a dynamic schema if it doesn't exist.
 
@@ -854,10 +907,6 @@ class PQARedisVectorStore:
         fields from the Document model is used.
         """
         try:
-            # Create index with the provided or default schema
-            if index_definition is None:
-                index_definition = self.index_definition
-
             self.redis_client.ft(index_name).create_index(
                 fields=index_schema,
                 definition=index_definition,
