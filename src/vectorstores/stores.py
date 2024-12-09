@@ -342,6 +342,11 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
             self.redis_client.delete(doc_id)
         return True
 
+    def drop_index(self, delete_documents: bool = True) -> None:
+        self.redis_client.ft(self.index_name).dropindex(
+            delete_documents=delete_documents
+        )
+
     async def add_texts(
         self,
         texts: List[str],
@@ -354,9 +359,9 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
             raise ValueError("Number of metadatas must match number of texts.")
 
         if "embeddings" not in kwargs:
-            kwargs["embeddings"] = await self.embedding_model.embed_documents(texts)
-        else:
-            embeddings = kwargs["embeddings"]
+            kwargs["embeddings"] = await self.embedding_model.aembed_documents(texts)
+
+        embeddings = kwargs["embeddings"]
 
         keys = self.key_manager.generate_batch_keys(len(texts))
         pipeline = self.redis_client.pipeline(transaction=False)
@@ -372,12 +377,9 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
             if self.store_type == "json":
                 # For JSON, we store everything as a JSON object
                 doc_json = {
-                    self._model.content_key: text,
-                    self._model.content_vector_key: embedding.tolist(),
+                    "text": text,
+                    "embedding": embedding.tolist(),
                 }
-                # Remove the already added keys from the metadata
-                for k in [self._model.content_key, self._model.content_vector_key]:
-                    clean_meta.pop(k, None)
 
                 for k, v in clean_meta.items():
                     doc_json[k] = v

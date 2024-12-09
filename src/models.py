@@ -56,6 +56,10 @@ class DocumentMetadata(BaseModel):
     volume: str | None = None
     issue: str | None = None
 
+    @property
+    def keys(self) -> list[str]:
+        return [k for k in self.model_fields.keys()]
+
 
 class DocumentChunk(BaseModel):
     """

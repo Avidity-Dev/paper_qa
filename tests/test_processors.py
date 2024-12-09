@@ -58,17 +58,6 @@ def mock_vector_db() -> RedisVectorStore:
         return vector_store
 
 
-def test_build_index():
-    schema = os.getenv("REDIS_VECTOR_CONFIG")
-    local_vector_db = RedisVectorStore(
-        redis_url="redis://localhost:6379",
-        index_name="idx:docs",
-        key_prefix="doc:",
-        embedding=None,
-        schema=INDEX_SCHEMA,
-    )
-
-
 def test_parse_pdf_bytes_to_pages(docs_list_bytes: list[bytes]):
     parsed_text: ParsedText = PQADocumentProcessor.parse_pdf_bytes_to_pages(
         docs_list_bytes[0]
@@ -100,16 +89,3 @@ async def test_process_documents(docs_list_bytes: list[bytes]):
     keys = await processor.process_documents(docs_list_bytes)
     print(keys)
     assert len(keys) > 0
-
-
-@pytest.mark.asyncio
-async def test_process_documents_v2(docs_list_bytes: list[bytes]):
-    local_vector_db = RedisVectorStore(
-        redis_url="redis://localhost:6379",
-        index_name="idx:docs",
-        key_prefix="doc:",
-        embedding=None,
-    )
-    local_vector_db.build_index()
-
-    pass

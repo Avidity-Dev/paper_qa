@@ -4,6 +4,7 @@ Commands for application environment management.
 
 import os
 from typing import Dict, Any, Union
+from langchain_openai import OpenAIEmbeddings
 import yaml
 import click
 from langchain_community.vectorstores import Redis
@@ -107,6 +108,30 @@ class RedisManager:
             click.echo(f"Successfully cleared all documents with prefix '{prefix}'")
         except Exception as e:
             click.echo(f"Error clearing documents: {str(e)}")
+
+    # TODO: Complete this function to fully populate the index with embeddings and metadata
+    def populate_index_from_dir(self, index_name: str, dir_path: str) -> None:
+        """Populates a Redis index from a directory of documents
+
+        Notes
+        -----
+        Currently defaults to embedding with OpenAI's text-embedding-3-small model.
+        """
+        # Get all the pdfs in the test directory
+        pdfs = [f for f in os.listdir(dir_path) if f.endswith(".pdf")]
+        pdf_bytes = []
+
+        # Read each pdf into a byte stream
+        for pdf in pdfs:
+            with open(os.path.join(dir_path, pdf), "rb") as f:
+                pdf_bytes.append(f.read())
+
+        # Embed the documents
+        embeddings = OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            api_key=os.getenv("OPENAI_API_KEY"),
+        )
+        doc_embeddings = embeddings.embed_documents(pdf_bytes)
 
 
 @click.group()
