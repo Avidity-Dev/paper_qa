@@ -134,6 +134,8 @@ class RedisIndexBuilder(IndexBuilder):
 
         # Check if index already exists
         if not self._index_exists():
+            if isinstance(self.schema, List[Field]):
+                schema = self.schema
             # Determine index type based on store_type
             index_type = IndexType.JSON if self.store_type == "json" else IndexType.HASH
 
@@ -144,7 +146,7 @@ class RedisIndexBuilder(IndexBuilder):
 
             # Create the index
             self.redis_client.ft(self.index_name).create_index(
-                fields=self.schema, definition=definition
+                fields=schema, definition=definition
             )
             logger.info(f"Created index: {self.index_name}")
         else:

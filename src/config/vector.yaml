@@ -37,11 +37,12 @@ numeric:
 
 vector:
   - name: embedding
-    type: FLAT
-    dims: 1536
-    datatype: FLOAT32
-    distance_metric: COSINE
-    initial_cap: 1000
+    algorithm: FLAT
+    attributes:
+      type: FLOAT32
+      dims: 1536
+      distance_metric: COSINE
+      initial_cap: 1000
 
 content_key: text
 content_vector_key: embedding

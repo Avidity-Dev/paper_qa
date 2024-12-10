@@ -27,6 +27,7 @@ class RedisManager:
         port: int = 6379,
         index_name: str = "idx:docs",
         prefix: str = "docs:",
+        schema: list[Field] = INDEX_SCHEMA,
         app_config_path: str = "src/config/app.yaml",
         static_config_path: str = "src/config/static.yaml",
     ):
@@ -36,49 +37,6 @@ class RedisManager:
         )
 
     def create_index(self, config: Union[Dict[str, Any], os.PathLike[str]]) -> None:
-        """Creates a Redis index from a configuration dictionary."""
-
-        # Get the app configuration to get the embeddings size
-        embedding_config = self.config_manager.embedding_config
-
-        if isinstance(config, os.PathLike):
-            with open(config, "r") as f:
-                config = yaml.safe_load(f)
-
-        index_name = config["name"]
-        prefix = config["prefix"]
-        schema = config["schema"]
-
-        # Build the FT.CREATE command
-        schema_str = " ".join(
-            [
-                f"$.{field['path']} AS {field['as']} {field['type']}"
-                + (f" WEIGHT {field['weight']}" if "weight" in field else "")
-                + (
-                    f" SEPARATOR \"{field['separator']}\""
-                    if "separator" in field
-                    else ""
-                )
-                + (f" SORTABLE" if field.get("sortable", False) else "")
-                + (f" NOSTEM" if field.get("nostem", False) else "")
-                + (
-                    (
-                        " VECTOR FLAT "
-                        + str(field["M"])
-                        + f" TYPE {field['vector_type']} DIM {field['dimensions']}"
-                        + f" DISTANCE_METRIC {field['distance_metric']}"
-                    )
-                    if field.get("vector", False)
-                    else ""
-                )
-                for field in schema
-            ]
-        )
-
-        create_cmd = (
-            f"FT.CREATE {index_name} ON JSON PREFIX {prefix} SCHEMA {schema_str}"
-        )
-
         try:
             self.client.execute_command(create_cmd)
             click.echo(f"Successfully created index '{index_name}'")
@@ -89,7 +47,7 @@ class RedisManager:
                 raise e
 
     def delete_index(self, index_name: str) -> None:
-        """Deletes a Redis index."""
+        """Deletes a Redis index and all its documents."""
         try:
             self.client.execute_command(f"FT.DROPINDEX {index_name}")
             click.echo(f"Successfully deleted index '{index_name}'")
@@ -148,7 +106,7 @@ def cli():
 @click.option("--host", default="localhost", help="Redis host")
 @click.option("--port", default=6379, help="Redis port")
 @click.option(
-    "--config",
+    "--config_file",
     required=True,
     type=click.Path(exists=True),
     help="Path to index config YAML file",
