@@ -80,7 +80,7 @@ class RedisIndexBuilder(IndexBuilder):
         index_name: str,
         key_prefix: str,
         store_type: str,
-        schema: Optional[Union[Dict[str, Any], str, os.PathLike, list[Field]]],
+        schema: Optional[Union[Dict[str, List[Any]], str, os.PathLike]],
         recreate_index: bool = False,
     ):
         """
@@ -94,7 +94,7 @@ class RedisIndexBuilder(IndexBuilder):
             Key prefix for documents in Redis.
         store_type : str
             "hash" or "json".
-        schema : Optional[Union[Dict[str, Any], str, os.PathLike, list[Field]]]
+        schema : Optional[Union[Dict[str, List[Any]], str, os.PathLike]]
             The index schema, as a dictionary or a path to a YAML file defining fields.
             If None, a default minimal schema will be used.
         recreate_index : bool
@@ -132,10 +132,17 @@ class RedisIndexBuilder(IndexBuilder):
         except Exception:
             pass
 
-        # Check if index already exists
         if not self._index_exists():
-            if isinstance(self.schema, List[Field]):
-                schema = self.schema
+            # Need to extract the vector definition from the schema since the langchain
+            # library expects the index definition and vector definitions to be passed
+            # in separately.
+            model = RedisModel()
+            schema = read_schema(self.schema)
+            print(f"Schema: {schema}\n")
+            vector_schema = schema.pop("vector")[0]
+            model.add_vector_field(vector_schema)
+            fields = model.get_fields()
+
             # Determine index type based on store_type
             index_type = IndexType.JSON if self.store_type == "json" else IndexType.HASH
 
@@ -146,13 +153,13 @@ class RedisIndexBuilder(IndexBuilder):
 
             # Create the index
             self.redis_client.ft(self.index_name).create_index(
-                fields=schema, definition=definition
+                fields=fields, definition=definition
             )
             logger.info(f"Created index: {self.index_name}")
         else:
             logger.info(f"Index {self.index_name} already exists. Skipping creation.")
 
-        return self.schema
+        return model
 
     def _index_exists(self) -> bool:
         """Check if a Redis index already exists."""
@@ -175,7 +182,11 @@ class BaseVectorStore(Protocol):
     ) -> Optional[bool]: ...
 
     def search(
-        self, query_embedding: list[float], k: int, search_type: str
+        self,
+        query_embedding: Union[list[float], str],
+        k: int,
+        search_type: str,
+        **kwargs: Any,
     ) -> List[Any]: ...
 
     def add_documents(self, documents: List[Any], **kwargs: Any) -> List[str]: ...
@@ -203,13 +214,9 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
         redis_url: str,
         embedding: Optional[Embeddings] = None,
         index_name: str = "idx:doc_index",
+        store_type: str = "json",
         key_prefix: str = "doc:",
         counter_keyname: str = "doc_counter",
-        vector_dim: int = 1536,
-        distance_metric: str = "COSINE",
-        store_type: str = "JSON",
-        algorithm: str = "FLAT",
-        algorithm_params: Optional[Dict[str, Any]] = None,
         schema: Optional[Union[Dict[str, Any], str, os.PathLike]] = None,
         redis_username: Optional[str] = None,
         redis_password: Optional[str] = None,
@@ -262,21 +269,10 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
         self.redis_url = redis_url
         self.index_name = index_name
         self.key_prefix = key_prefix
+        self.store_type = store_type
         self.counter_keyname = counter_keyname
-        self.vector_dim = vector_dim
-        self.distance_metric = distance_metric
         self._embedding_model = embedding
-        self.store_type = store_type.lower()
         self._model: Optional[RedisModel] = None
-
-        algorithm = algorithm.upper()
-        if algorithm not in ["FLAT", "HNSW"]:
-            raise ValueError(
-                f"Unsupported algorithm '{algorithm}'. "
-                "Redis supports 'FLAT' or 'HNSW' for vector search."
-            )
-        self.algorithm = algorithm
-        self.algorithm_params = algorithm_params or {}
 
         self.redis_client = redis.Redis.from_url(
             self.redis_url, username=redis_username, password=redis_password
@@ -286,11 +282,7 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
             redis_client=self.redis_client,
             index_name=self.index_name,
             key_prefix=self.key_prefix,
-            vector_dim=self.vector_dim,
-            distance_metric=self.distance_metric,
             store_type=self.store_type,
-            algorithm=self.algorithm,
-            algorithm_params=self.algorithm_params,
             schema=schema,
             recreate_index=recreate_index,
         )
@@ -357,8 +349,8 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
             if self.store_type == "json":
                 # For JSON, we store everything as a JSON object
                 doc_json = {
-                    "text": text,
-                    "embedding": embedding.tolist(),
+                    self._model.content_key: text,
+                    self._model.content_vector_key: embedding.tolist(),
                 }
 
                 for k, v in clean_meta.items():
@@ -383,12 +375,12 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
 
     def _run_knn_query(self, embedding: Union[bytes, list[float]], k: int):
         if isinstance(embedding, list):
+            # Redis expects a byte representation
             embedding = np.array(embedding, dtype=np.float32).tobytes()
 
-        field_prefix = "$." if self.store_type == "json" else ""
-        vec_field = f"{field_prefix}{self._model.content_vector_key}"
+        vec_field = self._model.content_vector_key
         q = (
-            Query(f"*=>[KNN {k} {vec_field} $vec_param AS score]")
+            Query(f"*=>[KNN {k} @{vec_field} $vec_param AS score]")
             .sort_by("score")
             # Return the content field and all metadata fields
             .return_fields(self._model.content_key, *self._model.metadata_keys, "score")
