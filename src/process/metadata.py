@@ -4,10 +4,15 @@ Metadata processing for documents.
 
 import json
 import re
+import os
+import aiohttp
 from typing import Any
 
 from paperqa.docs import DocMetadataClient
 from paperqa.llms import LiteLLMModel
+
+from typing import List, Optional, Dict
+from urllib.parse import quote
 
 PUBLICATION_METADATA_EXTRACTION_PROMPT = (
     "Please attempt to extract the following metadata from the provided text input, "
@@ -98,3 +103,80 @@ async def pqa_build_mla(
 async def pqa_add_pages_mla(llm: LiteLLMModel, **kwargs) -> str:
     """Adds page numbers to an MLA citation."""
     pass
+
+async def fetch_similar_papers(
+    query: str,
+    max_results: int = 10,
+    mailto: Optional[str] = None
+) -> List[Dict]:
+    """
+    Fetches similar papers using the Crossref API based on a query.
+    
+    Parameters:
+    -----------
+    query : str
+        Search query to find similar papers
+    max_results : int
+        Maximum number of results to return
+    mailto : str, optional
+        Email for polite API usage. Defaults to CROSSREF_MAILTO env variable
+        
+    Returns:
+    --------
+    List[Dict]
+        List of dictionaries containing paper information
+    """
+    # Validate query
+    if not query:
+        raise ValueError("Query cannot be empty")
+    # Use environment variable if mailto not provided
+    mailto = mailto or os.getenv('CROSSREF_MAILTO')
+    if not mailto:
+        raise ValueError("CROSSREF_MAILTO environment variable or mailto parameter required")
+
+    # Construct the URL with parameters
+    base_url = "https://api.crossref.org/works"
+    params = {
+        'query': query,
+        'mailto': mailto,
+        'rows': str(max_results),
+        'filter': 'type:journal-article',
+        'sort': 'relevance',
+        'select': 'DOI,title,author,published-print,container-title'
+    }
+    
+    async with aiohttp.ClientSession() as session:
+        try:
+            # Build URL with parameters
+            param_strings = [f"{k}={quote(str(v))}" for k, v in params.items()]
+            url = f"{base_url}?{'&'.join(param_strings)}"
+            
+            async with session.get(url) as response:
+                if response.status != 200:
+                    raise ValueError(f"API request failed with status {response.status}")
+                
+                data = await response.json()
+                
+                similar_papers = []
+                for item in data['message']['items']:
+                    # Extract author information
+                    authors = []
+                    if 'author' in item:
+                        for author in item['author']:
+                            author_name = f"{author.get('given', '')} {author.get('family', '')}".strip()
+                            if author_name:
+                                authors.append(author_name)
+                    
+                    paper = {
+                        'title': item.get('title', [None])[0],
+                        'authors': authors,
+                        'doi': item.get('DOI'),
+                        'published_year': item.get('published-print', {}).get('date-parts', [[None]])[0][0],
+                        'journal': item.get('container-title', [None])[0]
+                    }
+                    similar_papers.append(paper)
+                
+                return similar_papers
+                
+        except Exception as e:
+            raise ValueError(f"Error fetching similar papers: {str(e)}")
