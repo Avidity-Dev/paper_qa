@@ -4,7 +4,7 @@ import os
 
 from paperqa.settings import Settings as PQASettings
 
-from src.process.metadata import pqa_build_mla, pqa_extract_publication_metadata, fetch_similar_papers
+from src.process.metadata import pqa_build_mla, pqa_extract_publication_metadata, fetch_similar_papers, fetch_semantic_scholar_papers
 from src.models import DocumentChunk, DocumentMetadata
 from src.process.processors import PQAProcessor
 
@@ -90,6 +90,65 @@ async def test_fetch_similar_papers():
     # Test error handling with invalid query
     with pytest.raises(ValueError):
         await fetch_similar_papers(
+            query="",  # Empty query should raise error
+            max_results=1
+        )
+    
+@pytest.mark.asyncio
+async def test_fetch_semantic_scholar_papers():
+    """Test the Semantic Scholar API paper fetching functionality"""
+    # Test query 
+    test_query = "Deep learning in genomics and biomedicine"  
+    
+    # Test with small number of results for faster testing
+    try:
+        results = await fetch_semantic_scholar_papers(
+            query=test_query,
+            max_results=3
+        )
+        
+        # Print results for inspection
+        print("\nSemantic Scholar papers found:")
+        for i, paper in enumerate(results, 1):
+            print(f"\nPaper {i}:")
+            print(f"Title: {paper['title']}")
+            print(f"Authors: {', '.join(paper['authors'])}")
+            print(f"Journal/Venue: {paper['journal']}")
+            print(f"Year: {paper['published_year']}")
+            print(f"DOI: {paper['doi']}")
+            print(f"Citations: {paper['citation_count']}")
+        
+        # Basic assertions to verify the structure and content
+        assert isinstance(results, list), "Results should be a list"
+        assert len(results) > 0, "Should return at least one result"
+        
+        # Check structure of first result
+        first_paper = results[0]
+        assert isinstance(first_paper, dict), "Each result should be a dictionary"
+        
+        # Verify required fields are present
+        required_fields = {'title', 'authors', 'published_year', 'journal', 'citation_count'}
+        assert all(field in first_paper for field in required_fields), \
+            f"All required fields {required_fields} should be present"
+        
+        # Verify field types with more permissive checks
+        assert isinstance(first_paper['title'], (str, type(None))), "Title should be a string or None"
+        assert isinstance(first_paper['authors'], list), "Authors should be a list"
+        assert isinstance(first_paper['published_year'], (int, type(None))), "Year should be an integer or None"
+        assert isinstance(first_paper['journal'], (str, type(None))), "Journal should be a string or None"
+        assert isinstance(first_paper['citation_count'], (int, type(None))), "Citation count should be an integer or None"
+        
+        # DOI is optional in Semantic Scholar
+        if 'doi' in first_paper:
+            assert isinstance(first_paper['doi'], (str, type(None))), "DOI should be a string or None"
+    
+    except ValueError as e:
+        print(f"\nAPI Error: {str(e)}")
+        raise
+    
+    # Test error handling with invalid query
+    with pytest.raises(ValueError):
+        await fetch_semantic_scholar_papers(
             query="",  # Empty query should raise error
             max_results=1
         )

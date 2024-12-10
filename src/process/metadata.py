@@ -106,7 +106,7 @@ async def pqa_add_pages_mla(llm: LiteLLMModel, **kwargs) -> str:
 
 async def fetch_similar_papers(
     query: str,
-    max_results: int = 10,
+    max_results: int = 5,
     mailto: Optional[str] = None
 ) -> List[Dict]:
     """
@@ -180,3 +180,53 @@ async def fetch_similar_papers(
                 
         except Exception as e:
             raise ValueError(f"Error fetching similar papers: {str(e)}")
+
+async def fetch_semantic_scholar_papers(
+    query: str,
+    max_results: int = 5
+) -> List[Dict]:
+    """
+    Fetches papers from Semantic Scholar API based on a query.
+    """
+    if not query or not query.strip():
+        raise ValueError("Query cannot be empty")
+
+    base_url = "https://api.semanticscholar.org/graph/v1/paper/search"
+    
+    # Modify the fields string to match Semantic Scholar's expected format
+    fields = "title,authors,year,venue,citationCount,externalIds,publicationDate"
+    
+    params = {
+        'query': query,
+        'limit': max_results,
+        'fields': fields
+    }
+    
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(base_url, params=params) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise ValueError(f"API request failed with status {response.status}. Error: {error_text}")
+                
+                data = await response.json()
+                papers = []
+                
+                for item in data.get('data', []):
+                    # Get DOI from externalIds if available
+                    doi = item.get('externalIds', {}).get('DOI')
+                    
+                    paper = {
+                        'title': item.get('title'),
+                        'authors': [author.get('name', '') for author in item.get('authors', [])],
+                        'doi': doi,
+                        'published_year': item.get('year'),
+                        'journal': item.get('venue'),
+                        'citation_count': item.get('citationCount')
+                    }
+                    papers.append(paper)
+                
+                return papers
+                
+        except Exception as e:
+            raise ValueError(f"Error fetching papers: {str(e)}")
