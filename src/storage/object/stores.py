@@ -157,8 +157,26 @@ class AzureBlobStore(CloudObjectStore):
         """Initialize Azure Blob Storage client."""
         self.container_name = container_name
         self.connection_string = connection_string
-        self.blob_service_client = None
-        self.container_client = None
+        self.blob_service_client: Optional[BlobServiceClient] = None
+        self.container_client: Optional[AsyncContainerClient] = None
+
+    async def __aenter__(self) -> "AzureBlobStore":
+        """Async context manager entry.
+
+        Returns
+        -------
+        AzureBlobStore
+            The initialized store instance
+        """
+        await self._ensure_client()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Async context manager exit.
+
+        Ensures proper cleanup of Azure clients.
+        """
+        await self.close()
 
     async def _ensure_client(self):
         """Ensure blob service and container clients are initialized."""
@@ -201,8 +219,11 @@ class AzureBlobStore(CloudObjectStore):
             await self._ensure_client()
             blob_client = self.container_client.get_blob_client(file_name)
             stream = BytesIO()
-            download_stream = await blob_client.download_blob()
-            stream.write(await download_stream.readall())
+            async with blob_client as blob_client:
+                download_stream = await blob_client.download_blob()
+                async for chunk in download_stream.chunks():
+                    stream.write(chunk)
+            await blob_client.close()  # need to explicity close the blob client or else aiohttp will log warnings
             stream.seek(0)
             return stream
         except Exception as e:
@@ -215,6 +236,7 @@ class AzureBlobStore(CloudObjectStore):
         blob_list = []
         async for blob in self.container_client.list_blobs():
             blob_list.append(blob)
+
         return blob_list
 
     async def delete_file(self, file_name: str) -> bool:
@@ -226,6 +248,13 @@ class AzureBlobStore(CloudObjectStore):
         except Exception as e:
             logger.error(f"Error deleting from Azure Blob: {str(e)}")
             return False
+
+    async def close(self):
+        """Close any sockets opened by the client."""
+        if self.container_client:
+            await self.container_client.close()
+        if self.blob_service_client:
+            await self.blob_service_client.close()
 
 
 class CloudStorageFactory:

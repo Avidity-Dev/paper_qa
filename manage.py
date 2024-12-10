@@ -25,7 +25,8 @@ class RedisManager:
         self,
         host: str = "localhost",
         port: int = 6379,
-        db: int = 0,
+        index_name: str = "idx:docs",
+        prefix: str = "docs:",
         app_config_path: str = "src/config/app.yaml",
         static_config_path: str = "src/config/static.yaml",
     ):

@@ -80,11 +80,7 @@ class RedisIndexBuilder(IndexBuilder):
         index_name: str,
         key_prefix: str,
         store_type: str,
-        vector_dim: int,
-        distance_metric: str,
-        algorithm: str,
         schema: Optional[Union[Dict[str, Any], str, os.PathLike, list[Field]]],
-        algorithm_params: Optional[Dict[str, Any]] = None,
         recreate_index: bool = False,
     ):
         """
@@ -98,15 +94,7 @@ class RedisIndexBuilder(IndexBuilder):
             Key prefix for documents in Redis.
         store_type : str
             "hash" or "json".
-        vector_dim : int
-            Dimensionality of the embedding vectors.
-        distance_metric : str
-            Distance metric (e.g. "COSINE").
-        algorithm : str
-            Vector indexing algorithm ("FLAT" or "HNSW").
-        algorithm_params : Dict[str, Any]
-            Additional parameters for the vector indexing algorithm.
-        schema : Optional[Union[Dict[str, Any], str, os.PathLike]]
+        schema : Optional[Union[Dict[str, Any], str, os.PathLike, list[Field]]]
             The index schema, as a dictionary or a path to a YAML file defining fields.
             If None, a default minimal schema will be used.
         recreate_index : bool
@@ -116,18 +104,8 @@ class RedisIndexBuilder(IndexBuilder):
         self.index_name = index_name
         self.key_prefix = key_prefix
         self.store_type = store_type.lower()
-        self.vector_dim = vector_dim
-        self.distance_metric = distance_metric.upper()
-        self.algorithm = algorithm.upper()
-        self.algorithm_params = algorithm_params
         self.schema = schema
         self.recreate_index = recreate_index
-
-        if self.algorithm not in ["FLAT", "HNSW"]:
-            raise ValueError(
-                f"Unsupported algorithm '{self.algorithm}'. "
-                "Redis supports 'FLAT' or 'HNSW' for vector search."
-            )
 
         logger.info(f"Store type: {self.store_type}")
 
