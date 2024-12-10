@@ -6,50 +6,52 @@ import os
 from typing import Dict, Any, Union
 from langchain_openai import OpenAIEmbeddings
 import yaml
+
 import click
-from langchain_community.vectorstores import Redis
-from langchain_community.vectorstores.redis.schema import read_schema
+from dotenv import load_dotenv
 import redis
 
-from src.config.config import ConfigurationManager
 
-# TODO: Create a function to generate this command from config and be able to run from
-# from the command line.
-FT_CREATE_COMMAND = """
-FT.CREATE idx:docs_vss ON JSON PREFIX 1 docs: SCHEMA $.id AS id TEXT NOSTEM $.title AS title TEXT WEIGHT 1.0 $.authors AS authors TAG SEPARATOR "|" $.doi AS doi TEXT NOSTEM $.published_date AS published_date NUMERIC SORTABLE $.created_at AS created_at NUMERIC SORTABLE $.text AS text TEXT WEIGHT 1.0 $.embedding AS vector VECTOR FLAT 6 TYPE FLOAT32 DIM 1536 DISTANCE_METRIC COSINE
-"""
+from src.config.config import (
+    ConfigurationManager,
+    AppConfig,
+    INDEX_SCHEMA_PATH,
+    APP_CONFIG_PATH,
+    STATIC_CONFIG_PATH,
+)
+from src.storage.vector.stores import RedisVectorStore, RedisIndexBuilder
+
+load_dotenv()
 
 
 class RedisManager:
     def __init__(
         self,
-        host: str = "localhost",
-        port: int = 6379,
-        index_name: str = "idx:docs",
-        prefix: str = "docs:",
-        schema: list[Field] = INDEX_SCHEMA,
-        app_config_path: str = "src/config/app.yaml",
-        static_config_path: str = "src/config/static.yaml",
+        config_manager: ConfigurationManager = ConfigurationManager(),
+        environment: str = "local",
     ):
-        self.client = redis.Redis(host=host, port=port, db=db, decode_responses=True)
-        self.config_manager = ConfigurationManager(
-            app_config_path=app_config_path, static_config_path=static_config_path
+        self.config_manager = config_manager
+        self.app_config: AppConfig = config_manager.init_app_config(
+            environment=environment
         )
 
-    def create_index(self, config: Union[Dict[str, Any], os.PathLike[str]]) -> None:
-        try:
-            self.client.execute_command(create_cmd)
-            click.echo(f"Successfully created index '{index_name}'")
-        except redis.exceptions.ResponseError as e:
-            if "Index already exists" in str(e):
-                click.echo(f"Index '{index_name}' already exists")
-            else:
-                raise e
+    def create_index(
+        self, config: Union[Dict[str, Any], os.PathLike[str]] = INDEX_SCHEMA_PATH
+    ) -> None:
+        redis_client = redis.Redis.from_url(self.app_config.vector_db_url)
+        index_builder = RedisIndexBuilder(
+            redis_client=redis_client,
+            index_name=self.app_config.vector_db_index_name,
+            key_prefix=self.app_config.vector_db_index_prefix,
+            store_type="redis",
+            schema=config,
+        )
+        index_builder.build_index()
 
     def delete_index(self, index_name: str) -> None:
         """Deletes a Redis index and all its documents."""
         try:
-            self.client.execute_command(f"FT.DROPINDEX {index_name}")
+            self.client.execute_command(f"FT.DROPINDEX {index_name} DD")
             click.echo(f"Successfully deleted index '{index_name}'")
         except redis.exceptions.ResponseError as e:
             click.echo(f"Error deleting index: {str(e)}")
@@ -68,32 +70,8 @@ class RedisManager:
         except Exception as e:
             click.echo(f"Error clearing documents: {str(e)}")
 
-    # TODO: Complete this function to fully populate the index with embeddings and metadata
-    def populate_index_local_pdfs(self, index_name: str, dir_path: str) -> None:
-        """Populates a Redis index from a directory of documents
-
-        Notes
-        -----
-        Currently defaults to embedding with OpenAI's text-embedding-3-small model.
-        """
-        # Get all the pdfs in the test directory
-        pdfs = [f for f in os.listdir(dir_path) if f.endswith(".pdf")]
-        pdf_bytes = []
-
-        # Read each pdf into a byte stream
-        for pdf in pdfs:
-            with open(os.path.join(dir_path, pdf), "rb") as f:
-                pdf_bytes.append(f.read())
-
-        # Embed the documents
-        embeddings = OpenAIEmbeddings(
-            model="text-embedding-3-small",
-            api_key=os.getenv("OPENAI_API_KEY"),
-        )
-        doc_embeddings = embeddings.embed_documents(pdf_bytes)
-
-    def populate_index_from_cloud_pdfs(self, index_name: str, dir_path: str) -> None:
-        pass
+    def populate_test_data(self) -> None:
+        """Retrieves test documents from cloud storage and populates the index."""
 
 
 @click.group()

@@ -33,10 +33,15 @@ async def test_extract_publication_metadata(
     assert all(metadata is not None for metadata in extracted_metadata)
 
 
-# TODO: Using a known paper, confirm that the MLA citation has expected fields
-@pytest.mark.skip(reason="Not implemented.")
 @pytest.mark.asyncio
 async def test_build_mla(pqa_settings: PQASettings):
     llm = pqa_settings.get_llm()
-    mla = await pqa_build_mla(llm)
+    metadata = {
+        "title": "Attention is All You Need",
+        "author": "Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, Illia Polosukhin",
+        "year": "2017",
+        "journal": "Advances in Neural Information Processing Systems",
+        "volume": "30",
+    }
+    mla = await pqa_build_mla(llm, **metadata)
     print(f"mla:\n{mla}")
