@@ -1,10 +1,10 @@
 import json
 import pytest
 import os
-
+from typing import List
 from paperqa.settings import Settings as PQASettings
 
-from src.process.metadata import pqa_build_mla, pqa_extract_publication_metadata, fetch_similar_papers, fetch_semantic_scholar_papers
+from src.process.metadata import pqa_build_mla, pqa_extract_publication_metadata, enrich_metadata_list, find_similar_papers
 from src.models import DocumentChunk, DocumentMetadata
 from src.process.processors import PQAProcessor
 
@@ -44,111 +44,212 @@ async def test_build_mla(pqa_settings: PQASettings):
 
 
 @pytest.mark.asyncio
-async def test_fetch_similar_papers():
-    """Test the Crossref API paper fetching functionality"""
-    # Test query
-    test_query = "Deep learning in genomics and biomedicine"
+async def test_extract_and_enrich_metadata(
+    chunked_docs: List[List[str]], 
+    pqa_settings: PQASettings
+):
+    """
+    Test both LLM metadata extraction and API enrichment using real documents
+    and real API calls to Semantic Scholar and Crossref.
+    """
+    # Step 1: Extract metadata using LLM
+    test_metadata_obj = DocumentMetadata()
+    metadata_keys = test_metadata_obj.keys
+    llm = pqa_settings.get_llm()
     
-    # Ensure CROSSREF_MAILTO is in .env
-    if not os.getenv('CROSSREF_MAILTO'):
-        pytest.skip("CROSSREF_MAILTO environment variable not set")
-    
-    # Test with small number of results for faster testing such as 3 for now
-    results = await fetch_similar_papers(
-        query=test_query,
-        max_results=3
-    )
-    # Print results
-    print("\nSimilar papers found:")
-    for i, paper in enumerate(results, 1):
-        print(f"\nPaper {i}:")
-        print(f"Title: {paper['title']}")
-        print(f"Authors: {', '.join(paper['authors'])}")
-        print(f"Journal: {paper['journal']}")
-        print(f"Year: {paper['published_year']}")
-        print(f"DOI: {paper['doi']}")
-        
-    # Basic assertions to verify the structure and content
-    assert isinstance(results, list), "Results should be a list"
-    assert len(results) > 0, "Should return at least one result"
-    
-    # Check structure of first result
-    first_paper = results[0]
-    assert isinstance(first_paper, dict), "Each result should be a dictionary"
-    
-    # Verify required fields are present
-    required_fields = {'title', 'authors', 'doi', 'published_year', 'journal'}
-    assert all(field in first_paper for field in required_fields), \
-        f"All required fields {required_fields} should be present"
-    
-    # Verify field types
-    assert isinstance(first_paper['title'], str), "Title should be a string"
-    assert isinstance(first_paper['authors'], list), "Authors should be a list"
-    assert isinstance(first_paper['doi'], str), "DOI should be a string"
-    assert isinstance(first_paper['journal'], str), "Journal should be a string"
-    
-    # Test error handling with invalid query
-    with pytest.raises(ValueError):
-        await fetch_similar_papers(
-            query="",  # Empty query should raise error
-            max_results=1
+    extracted_metadata = []
+    for doc in chunked_docs:
+        chunks = doc[0:2]
+        metadata = await pqa_extract_publication_metadata(
+            text=chunks,
+            metadata_keys=metadata_keys,
+            llm=llm
         )
+        extracted_metadata.append(metadata)
     
-@pytest.mark.asyncio
-async def test_fetch_semantic_scholar_papers():
-    """Test the Semantic Scholar API paper fetching functionality"""
-    # Test query 
-    test_query = "Deep learning in genomics and biomedicine"  
+    # Print and verify initial extraction
+    print("\nExtracted metadata from LLM:")
+    print(json.dumps(extracted_metadata, indent=4))
     
-    # Test with small number of results for faster testing
+    # Basic assertions for extracted metadata
+    assert len(extracted_metadata) == len(chunked_docs)
+    assert all(metadata is not None for metadata in extracted_metadata)
+    
+    # Step 2: Enrich the extracted metadata using real APIs (must flatten the list first)
+    metadata_to_enrich = []
+    for doc_metadata in extracted_metadata:
+        if isinstance(doc_metadata, dict):
+            metadata_to_enrich.append(doc_metadata)
+        else:
+            metadata_to_enrich.extend(doc_metadata)
+    
     try:
-        results = await fetch_semantic_scholar_papers(
-            query=test_query,
-            max_results=3
+        enriched_metadata = await enrich_metadata_list(
+            metadata_to_enrich,
+            mailto="angel.murillo@aviditybio.com"  
         )
         
-        # Print results for inspection
-        print("\nSemantic Scholar papers found:")
-        for i, paper in enumerate(results, 1):
-            print(f"\nPaper {i}:")
-            print(f"Title: {paper['title']}")
-            print(f"Authors: {', '.join(paper['authors'])}")
-            print(f"Journal/Venue: {paper['journal']}")
-            print(f"Year: {paper['published_year']}")
-            print(f"DOI: {paper['doi']}")
-            print(f"Citations: {paper['citation_count']}")
+        print("\nEnriched metadata using real APIs:")
+        print(json.dumps(enriched_metadata, indent=4))
         
-        # Basic assertions to verify the structure and content
-        assert isinstance(results, list), "Results should be a list"
-        assert len(results) > 0, "Should return at least one result"
-        
-        # Check structure of first result
-        first_paper = results[0]
-        assert isinstance(first_paper, dict), "Each result should be a dictionary"
-        
-        # Verify required fields are present
-        required_fields = {'title', 'authors', 'published_year', 'journal', 'citation_count'}
-        assert all(field in first_paper for field in required_fields), \
-            f"All required fields {required_fields} should be present"
-        
-        # Verify field types with more permissive checks
-        assert isinstance(first_paper['title'], (str, type(None))), "Title should be a string or None"
-        assert isinstance(first_paper['authors'], list), "Authors should be a list"
-        assert isinstance(first_paper['published_year'], (int, type(None))), "Year should be an integer or None"
-        assert isinstance(first_paper['journal'], (str, type(None))), "Journal should be a string or None"
-        assert isinstance(first_paper['citation_count'], (int, type(None))), "Citation count should be an integer or None"
-        
-        # DOI is optional in Semantic Scholar
-        if 'doi' in first_paper:
-            assert isinstance(first_paper['doi'], (str, type(None))), "DOI should be a string or None"
-    
+        # Verify enrichment structure and content
+        assert len(enriched_metadata) == len(metadata_to_enrich)
+        for entry in enriched_metadata:
+            # Check required fields
+            assert isinstance(entry, dict), "Each entry should be a dictionary"
+            required_fields = {
+                "title", "authors", "doi", "published_date", 
+                "journal", "volume", "issue", "citation"
+            }
+            
+            # Verify fields exist (can be None)
+            assert all(field in entry for field in required_fields), \
+                f"All required fields {required_fields} should be present"
+            
+            # Verify field types
+            assert isinstance(entry["title"], str), "Title should be a string"
+            assert isinstance(entry["authors"], list), "Authors should be a list"
+            assert isinstance(entry["doi"], (str, type(None))), "DOI should be a string or None"
+            assert isinstance(entry["published_date"], (str, type(None))), \
+                "Published date should be a string or None"
+            assert isinstance(entry["journal"], (str, type(None))), \
+                "Journal should be a string or None"
+            assert isinstance(entry["volume"], (str, type(None))), \
+                "Volume should be a string or None"
+            assert isinstance(entry["issue"], (str, type(None))), \
+                "Issue should be a string or None"
+            
+            # Original values should be preserved when they existed
+            original_entry = next(
+                m for m in metadata_to_enrich 
+                if m["title"] == entry["title"]
+            )
+            for key, value in original_entry.items():
+                if value is not None:
+                    assert entry[key] == value, \
+                        f"Original value for {key} should be preserved"
+                        
     except ValueError as e:
         print(f"\nAPI Error: {str(e)}")
         raise
+
+@pytest.mark.asyncio
+async def test_similar_papers_for_extracted(
+    chunked_docs: List[List[str]], 
+    pqa_settings: PQASettings
+):
+    """
+    Test finding similar papers using metadata from actual extracted documents,
+    making real API calls to find similar papers.
+    """
+    # First get metadata from a real document
+    test_metadata_obj = DocumentMetadata()
+    metadata_keys = test_metadata_obj.keys
+    llm = pqa_settings.get_llm()
     
-    # Test error handling with invalid query
-    with pytest.raises(ValueError):
-        await fetch_semantic_scholar_papers(
-            query="",  # Empty query should raise error
-            max_results=1
+    # Get metadata from first document
+    first_doc_chunks = chunked_docs[0][0:2]
+    extracted_metadata = await pqa_extract_publication_metadata(
+        text=first_doc_chunks,
+        metadata_keys=metadata_keys,
+        llm=llm
+    )
+    
+    # Debug print to check the structure of extracted_metadata
+    print("\nExtracted Metadata:", extracted_metadata)
+
+    # Use the extracted metadata directly
+    test_metadata = extracted_metadata  # No need to index
+
+    try:
+        # Find similar papers using real API calls
+        similar_papers = await find_similar_papers(
+            test_metadata,
+            max_results=5,
+            mailto="angel.murillo@aviditybio.com"
         )
+        
+        print("\nSimilar papers found:")
+        for i, paper in enumerate(similar_papers, 1):
+            print(f"\nPaper {i}:")
+            print(f"Title: {paper['title']}")
+            print(f"Authors: {', '.join(paper['authors'])}")
+            print(f"Journal: {paper['journal']}")
+            print(f"Published Date: {paper['published_date']}")
+            print(f"DOI: {paper['doi']}")
+            if paper.get('citation_count'):
+                print(f"Citations: {paper['citation_count']}")
+        
+        # Verify similar papers structure and content
+        assert isinstance(similar_papers, list), "Results should be a list"
+        assert len(similar_papers) > 0, "Should return at least one similar paper"
+        
+        # Check each similar paper
+        for paper in similar_papers:
+            assert isinstance(paper, dict), "Each paper should be a dictionary"
+            
+            # Verify required fields
+            required_fields = {
+                'title', 'authors', 'doi', 'published_date',
+                'journal', 'volume', 'issue', 'citation'
+            }
+            assert all(field in paper for field in required_fields), \
+                f"All required fields {required_fields} should be present"
+            
+            # Verify field types
+            assert isinstance(paper['title'], str), "Title should be a string"
+            assert isinstance(paper['authors'], list), "Authors should be a list"
+            assert isinstance(paper['doi'], (str, type(None))), "DOI should be a string or None"
+            assert isinstance(paper['published_date'], (str, type(None))), \
+                "Published date should be a string or None"
+            assert isinstance(paper['journal'], (str, type(None))), \
+                "Journal should be a string or None"
+            
+            # Verify it's not the same as original paper
+            assert paper['title'] != test_metadata['title'], \
+                "Similar paper should be different from original"
+            
+    except ValueError as e:
+        print(f"\nAPI Error: {str(e)}")
+        raise
+
+@pytest.mark.asyncio
+async def test_error_handling():
+    """Test error handling for edge cases"""
+    # Test with empty metadata
+    empty_metadata = {
+        "title": None,
+        "authors": [],
+        "doi": None,
+        "published_date": None,
+        "citation": None,
+        "journal": None,
+        "volume": None,
+        "issue": None
+    }
+    
+    # Should handle empty metadata gracefully
+    enriched = await enrich_metadata_list(
+        [empty_metadata],
+        mailto="your@email.com"  # Replace with your email
+    )
+    assert len(enriched) == 1, "Should return same number of entries"
+    
+    # Test with invalid DOI
+    invalid_doi_metadata = {
+        "title": "Test Paper",
+        "authors": ["Test Author"],
+        "doi": "invalid-doi",
+        "published_date": None,
+        "citation": None,
+        "journal": None,
+        "volume": None,
+        "issue": None
+    }
+    
+    # Should handle invalid DOI gracefully and try title-based search
+    enriched = await enrich_metadata_list(
+        [invalid_doi_metadata],
+        mailto="your@email.com"  # Replace with your email
+    )
+    assert len(enriched) == 1, "Should return same number of entries"

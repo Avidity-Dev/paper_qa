@@ -10,6 +10,7 @@ from typing import Any
 
 from paperqa.docs import DocMetadataClient
 from paperqa.llms import LiteLLMModel
+from src.process.rate_limiter import rate_limiter
 
 from typing import List, Optional, Dict
 from urllib.parse import quote
@@ -42,24 +43,19 @@ CITATION_PROMPT = (
     "vol. 61, no. 3, summer 2019, pp.285-310"
 )
 
-
 def _metadata_keys_to_json(metadata_keys: list[str]) -> str:
     """Converts a list of metadata keys to a JSON string with empty values"""
     return json.dumps({key: None for key in metadata_keys})
-
 
 def unpack_metadata(obj: Any, metadata: dict) -> None:
     """Unpacks metadata into an object in place"""
     for key, value in metadata.items():
         setattr(obj, key, value)
 
-
 async def pqa_extract_publication_metadata(
     text: str, metadata_keys: list[str], llm: LiteLLMModel
 ) -> dict:
-    """Extracts metadata from a text input using a LiteLLMModel wrapper from the paperqa
-    library.
-    """
+    """Extracts metadata from a text input using a LiteLLMModel wrapper."""
     metadata_keys_json = _metadata_keys_to_json(metadata_keys)
     response = await llm.run_prompt(
         PUBLICATION_METADATA_EXTRACTION_PROMPT,
@@ -75,23 +71,13 @@ async def pqa_extract_publication_metadata(
     except json.JSONDecodeError:
         raise ValueError("Failed to parse metadata from response")
 
-
+# TO DO: Add the MLA citation function from enriched metadata
 async def pqa_build_mla(
     llm: LiteLLMModel,
     **kwargs,
 ) -> str:
-    """Builds an MLA citation from the provided metadata, using a LiteLLMModel wrapper
-    from the paperqa library.
-
-    Parameters:
-    -----------
-    **kwargs: dict
-        Keyword arguments to pass to the citation builder.
-    """
-    # collect kwargs into a dict
+    """Builds an MLA citation from the provided metadata."""
     metadata = {k: v for k, v in kwargs.items()}
-
-    # build the citation
     response = await llm.run_prompt(
         CITATION_PROMPT,
         data={"metadata": metadata},
@@ -99,134 +85,272 @@ async def pqa_build_mla(
     )
     return response
 
-
 async def pqa_add_pages_mla(llm: LiteLLMModel, **kwargs) -> str:
     """Adds page numbers to an MLA citation."""
-    pass
+    pass  
 
-async def fetch_similar_papers(
-    query: str,
-    max_results: int = 5,
-    mailto: Optional[str] = None
-) -> List[Dict]:
+# Added configuration for Semantic Scholar API with rate limiter
+SEMANTIC_SCHOLAR_API_KEY = os.getenv('SEMANTIC_SCHOLAR_API_KEY')
+if not SEMANTIC_SCHOLAR_API_KEY:
+    raise ValueError("SEMANTIC_SCHOLAR_API_KEY environment variable is required")
+
+async def enrich_metadata_with_semantic_scholar(metadata: Dict) -> Optional[Dict]:
     """
-    Fetches similar papers using the Crossref API based on a query.
-    
-    Parameters:
-    -----------
-    query : str
-        Search query to find similar papers
-    max_results : int
-        Maximum number of results to return
-    mailto : str, optional
-        Email for polite API usage. Defaults to CROSSREF_MAILTO env variable
-        
-    Returns:
-    --------
-    List[Dict]
-        List of dictionaries containing paper information
+    Enriches a single metadata entry using rate-limited Semantic Scholar API.
     """
-    # Validate query
-    if not query:
-        raise ValueError("Query cannot be empty")
-    # Use environment variable if mailto not provided
+    base_url = "https://api.semanticscholar.org/graph/v1/paper"
+    fields = "title,authors,year,venue,citationCount,publicationDate,externalIds"
+
+    # Clean up DOI if present
+    doi = metadata.get('doi')
+    if doi and doi.startswith('https://doi.org/'):
+        doi = doi.replace('https://doi.org/', '')
+
+    # Try DOI first if available
+    if doi:
+        endpoint = f"{base_url}/DOI:{quote(doi)}"
+        params = {'fields': fields}
+    # Fall back to title search if no DOI
+    elif metadata.get('title'):
+        endpoint = f"{base_url}/search"
+        params = {
+            'query': metadata['title'],
+            'fields': fields,
+            'limit': 1
+        }
+    else:
+        return None
+
+    # Wait for rate limiter before making request
+    await rate_limiter.acquire('semantic_scholar')
+
+    headers = {
+        'x-api-key': SEMANTIC_SCHOLAR_API_KEY
+    }
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(endpoint, params=params, headers=headers) as response:
+                if response.status != 200:
+                    return None
+                
+                data = await response.json()
+                paper_data = data['data'][0] if 'search' in endpoint else data
+                
+                if not paper_data:
+                    return None
+
+                enriched = metadata.copy()
+                
+                # Only update fields that were null in original metadata
+                if not enriched.get('doi'):
+                    enriched['doi'] = paper_data.get('externalIds', {}).get('DOI')
+                if not enriched.get('published_date'):
+                    enriched['published_date'] = paper_data.get('publicationDate')
+                if not enriched.get('journal'):
+                    enriched['journal'] = paper_data.get('venue')
+                
+                # Add some semantic scholar specific fields as extra info
+                enriched['citation_count'] = paper_data.get('citationCount')
+                enriched['year'] = paper_data.get('year')
+                
+                return enriched
+                
+        except Exception:
+            return None
+
+
+async def enrich_metadata_with_crossref(metadata: Dict, mailto: Optional[str] = None) -> Optional[Dict]:
+    """
+    Enriches a single metadata entry using rate-limited Crossref API.
+    """
     mailto = mailto or os.getenv('CROSSREF_MAILTO')
     if not mailto:
         raise ValueError("CROSSREF_MAILTO environment variable or mailto parameter required")
 
-    # Construct the URL with parameters
     base_url = "https://api.crossref.org/works"
-    params = {
-        'query': query,
-        'mailto': mailto,
-        'rows': str(max_results),
-        'filter': 'type:journal-article',
-        'sort': 'relevance',
-        'select': 'DOI,title,author,published-print,container-title'
-    }
-    
+
+    # Clean up DOI if present
+    doi = metadata.get('doi')
+    if doi and doi.startswith('https://doi.org/'):
+        doi = doi.replace('https://doi.org/', '')
+
+    # Wait for rate limiter before making request
+    await rate_limiter.acquire('crossref')
+
+    # Try DOI first if available
+    if doi:
+        endpoint = f"{base_url}/{quote(doi)}"
+        params = {'mailto': mailto}
+    # Fall back to title search if no DOI
+    elif metadata.get('title'):
+        endpoint = base_url
+        params = {
+            'query': metadata['title'],
+            'mailto': mailto,
+            'rows': '1',
+            'filter': 'type:journal-article'
+        }
+    else:
+        return None
+
     async with aiohttp.ClientSession() as session:
         try:
-            # Build URL with parameters
-            param_strings = [f"{k}={quote(str(v))}" for k, v in params.items()]
-            url = f"{base_url}?{'&'.join(param_strings)}"
-            
-            async with session.get(url) as response:
+            async with session.get(endpoint, params=params) as response:
                 if response.status != 200:
-                    raise ValueError(f"API request failed with status {response.status}")
+                    return None
                 
                 data = await response.json()
+                item = data['message'] if 'DOI' in endpoint else data['message']['items'][0]
                 
-                similar_papers = []
-                for item in data['message']['items']:
-                    # Extract author information
-                    authors = []
-                    if 'author' in item:
-                        for author in item['author']:
-                            author_name = f"{author.get('given', '')} {author.get('family', '')}".strip()
-                            if author_name:
-                                authors.append(author_name)
-                    
-                    paper = {
-                        'title': item.get('title', [None])[0],
-                        'authors': authors,
-                        'doi': item.get('DOI'),
-                        'published_year': item.get('published-print', {}).get('date-parts', [[None]])[0][0],
-                        'journal': item.get('container-title', [None])[0]
-                    }
-                    similar_papers.append(paper)
+                enriched = metadata.copy()
                 
-                return similar_papers
+                # Only update fields that were null in original metadata
+                if not enriched.get('doi'):
+                    enriched['doi'] = item.get('DOI')
+                if not enriched.get('journal'):
+                    enriched['journal'] = item.get('container-title', [None])[0]
+                if not enriched.get('volume'):
+                    enriched['volume'] = item.get('volume')
+                if not enriched.get('issue'):
+                    enriched['issue'] = item.get('issue')
+                if not enriched.get('published_date'):
+                    date_parts = item.get('published-print', {}).get('date-parts', [[]])[0]
+                    if len(date_parts) >= 3:
+                        enriched['published_date'] = f"{date_parts[0]}-{date_parts[1]:02d}-{date_parts[2]:02d}"
                 
-        except Exception as e:
-            raise ValueError(f"Error fetching similar papers: {str(e)}")
+                return enriched
+                
+        except Exception:
+            return None
 
-async def fetch_semantic_scholar_papers(
-    query: str,
-    max_results: int = 5
+async def enrich_metadata_list(
+    metadata_list: List[Dict],
+    mailto: Optional[str] = None
 ) -> List[Dict]:
     """
-    Fetches papers from Semantic Scholar API based on a query.
+    Enriches a list of metadata entries using both Semantic Scholar and Crossref.
+    Maintains the original metadata structure while adding missing information.
     """
-    if not query or not query.strip():
-        raise ValueError("Query cannot be empty")
+    enriched_list = []
+    
+    for metadata in metadata_list:
+        # Try Semantic Scholar first
+        enriched = await enrich_metadata_with_semantic_scholar(metadata)
+        
+        # If no results or missing key fields, try Crossref
+        if not enriched or not all([
+            enriched.get('doi'),
+            enriched.get('published_date'),
+            enriched.get('journal')
+        ]):
+            crossref_enriched = await enrich_metadata_with_crossref(
+                enriched or metadata,
+                mailto=mailto
+            )
+            if crossref_enriched:
+                enriched = crossref_enriched
+        
+        # If still no enrichment, use original metadata
+        enriched = enriched or metadata
+        enriched_list.append(enriched)
+    
+    return enriched_list
 
+async def find_similar_papers(
+    metadata: Dict,
+    max_results: int = 5,
+    mailto: Optional[str] = None
+) -> List[Dict]:
+    """
+    Finds similar papers using rate-limited API calls.
+    """
+    similar_papers = []
+    
+    if not metadata.get('title'):
+        return similar_papers
+
+    # Try Semantic Scholar first
     base_url = "https://api.semanticscholar.org/graph/v1/paper/search"
+    fields = "title,authors,year,venue,citationCount,publicationDate,externalIds"
     
-    # Modify the fields string to match Semantic Scholar's expected format
-    fields = "title,authors,year,venue,citationCount,externalIds,publicationDate"
-    
-    params = {
-        'query': query,
-        'limit': max_results,
-        'fields': fields
+    # Wait for rate limiter before making request
+    await rate_limiter.acquire('semantic_scholar')
+
+    headers = {
+        'x-api-key': SEMANTIC_SCHOLAR_API_KEY
     }
     
     async with aiohttp.ClientSession() as session:
         try:
-            async with session.get(base_url, params=params) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    raise ValueError(f"API request failed with status {response.status}. Error: {error_text}")
-                
-                data = await response.json()
-                papers = []
-                
-                for item in data.get('data', []):
-                    # Get DOI from externalIds if available
-                    doi = item.get('externalIds', {}).get('DOI')
-                    
-                    paper = {
-                        'title': item.get('title'),
-                        'authors': [author.get('name', '') for author in item.get('authors', [])],
-                        'doi': doi,
-                        'published_year': item.get('year'),
-                        'journal': item.get('venue'),
-                        'citation_count': item.get('citationCount')
-                    }
-                    papers.append(paper)
-                
-                return papers
-                
-        except Exception as e:
-            raise ValueError(f"Error fetching papers: {str(e)}")
+            params = {
+                'query': metadata['title'],
+                'fields': fields,
+                'limit': max_results
+            }
+            
+            async with session.get(base_url, params=params, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    for item in data.get('data', []):
+                        if item.get('title') != metadata.get('title'):
+                            similar = {
+                                'title': item.get('title'),
+                                'authors': [author.get('name', '') for author in item.get('authors', [])],
+                                'doi': item.get('externalIds', {}).get('DOI'),
+                                'published_date': item.get('publicationDate'),
+                                'citation': None,
+                                'journal': item.get('venue'),
+                                'volume': None,
+                                'issue': None
+                            }
+                            similar_papers.append(similar)
+        except Exception:
+            pass
+    
+    # If we need more results, try Crossref
+    if len(similar_papers) < max_results:
+        try:
+            # Wait for rate limiter before making request
+            await rate_limiter.acquire('crossref')
+
+            crossref_base = "https://api.crossref.org/works"
+            remaining = max_results - len(similar_papers)
+            
+            params = {
+                'query': metadata['title'],
+                'mailto': mailto,
+                'rows': str(remaining),
+                'filter': 'type:journal-article'
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(crossref_base, params=params) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        
+                        for item in data['message']['items']:
+                            if item.get('title', [None])[0] != metadata.get('title'):
+                                date_parts = item.get('published-print', {}).get('date-parts', [[]])[0]
+                                published_date = None
+                                if len(date_parts) >= 3:
+                                    published_date = f"{date_parts[0]}-{date_parts[1]:02d}-{date_parts[2]:02d}"
+                                
+                                similar = {
+                                    'title': item.get('title', [None])[0],
+                                    'authors': [
+                                        f"{author.get('given', '')} {author.get('family', '')}".strip()
+                                        for author in item.get('author', [])
+                                    ],
+                                    'doi': item.get('DOI'),
+                                    'published_date': published_date,
+                                    'citation': None,
+                                    'journal': item.get('container-title', [None])[0],
+                                    'volume': item.get('volume'),
+                                    'issue': item.get('issue')
+                                }
+                                similar_papers.append(similar)
+        except Exception:
+            pass
+    
+    return similar_papers[:max_results]
