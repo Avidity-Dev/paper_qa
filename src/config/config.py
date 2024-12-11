@@ -65,8 +65,8 @@ class AppConfig:
         Name of the Redis index
     index_prefix: str
         Prefix used for records in the Redis index
-    counter_name: str
-        Name of the key used to store next available record id
+    counter_key: str
+        Key used to store next available record id
     embedding_config: Tuple[str, EmbeddingConfig]
         Embedding model configuration
     llm_config: Tuple[str, LLMConfig]
@@ -80,7 +80,7 @@ class AppConfig:
     vector_db_url: str
     index_name: str
     index_prefix: str
-    counter_name: str
+    counter_key: str
     embedding_config: Tuple[str, EmbeddingConfig]
     llm_config: Tuple[str, LLMConfig]
     summary_llm_config: Tuple[str, LLMConfig]
@@ -156,6 +156,8 @@ class ConfigurationManager:
         """Load application configuration from YAML file."""
         with open(self._app_config_path, "r") as f:
             self._app_config = yaml.safe_load(f)
+
+        self._app_config["environment"] = environment
 
         llm_model = self._app_config[environment]["llm_model"]
         summary_llm_model = self._app_config[environment]["summary_llm_model"]

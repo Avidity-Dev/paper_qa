@@ -19,7 +19,10 @@ from src.config.config import (
     APP_CONFIG_PATH,
     STATIC_CONFIG_PATH,
 )
+from src.process.metadata import pqa_build_mla, pqa_extract_publication_metadata
+from src.process.processors import PQAProcessor
 from src.storage.vector.stores import RedisVectorStore, RedisIndexBuilder
+
 
 load_dotenv()
 
@@ -70,8 +73,15 @@ class RedisManager:
         except Exception as e:
             click.echo(f"Error clearing documents: {str(e)}")
 
-    def populate_test_data(self) -> None:
+    async def populate_test_data(self) -> None:
         """Retrieves test documents from cloud storage and populates the index."""
+        vector_db = RedisVectorStore(
+            redis_url=self.app_config.vector_db_url,
+            index_name=self.app_config.index_name,
+            key_prefix=self.app_config.index_prefix,
+            counter_key=self.app_config.counter_key,
+            schema=INDEX_SCHEMA_PATH,
+        )
 
 
 @click.group()
