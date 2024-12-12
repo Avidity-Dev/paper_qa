@@ -94,7 +94,9 @@ class RedisManager:
 
 @click.group()
 def cli():
-    """Redis Index Management CLI"""
+    """
+    CLI tool for managing Redis search indexes and documents.
+    """
     pass
 
 
@@ -111,7 +113,28 @@ def cli():
     help="Path to index config YAML file",
 )
 def create_index(environment: str, config_file: str):
-    """Create a Redis index from a YAML configuration file."""
+    """
+    Create a new Redis search index using the specified configuration.
+
+    Parameters
+    ----------
+    environment : str
+        The deployment environment (local, dev, prod). Defaults to "local". This
+        will be used to load the appropriate configuration from the config.yaml
+        file.
+    config_file : str
+        Path to YAML file containing index schema configuration
+        including field definitions, prefixes, and other settings
+
+    Notes
+    -----
+    The config file should define the index schema including field types,
+    names, and any special index configurations.
+
+    Examples
+    --------
+    $ python manage.py create-index --environment dev --config_file schema.yaml
+    """
     with open(config_file, "r") as f:
         config_data = yaml.safe_load(f)
 
@@ -121,28 +144,74 @@ def create_index(environment: str, config_file: str):
 
 @cli.command()
 @click.option(
-    "--environment",
+    "--env",
     default="local",
     help="Environment to use (local, dev, prod)",
 )
 @click.argument("index", type=click.STRING, required=True)
 @click.option("--dd", default=True, is_flag=True, help="Drop documents from index")
-def delete_index(environment: str, index: str, dd: bool):
-    """Delete a Redis index and all its documents."""
-    redis_manager = RedisManager(environment=environment)
+def delete_index(env: str, index: str, dd: bool):
+    """
+    Delete a Redis search index and optionally its associated documents.
+
+    Currently defaults to utilizing the YAML config for determine the Redis
+    connection parameters, based on the environment.
+
+    Parameters
+    ----------
+    environment : str
+        The deployment environment (local, dev, prod)
+    index : str
+        Name of the Redis search index to delete
+    dd : bool, optional
+        If True, delete all documents associated with the index.
+        If False, only delete the index structure.
+        Default is True.
+
+    Notes
+    -----
+    This operation cannot be undone. Use with caution in production environments.
+
+    Examples
+    --------
+    $ python manage.py delete-index --env local my_index --dd
+    """
+    redis_manager = RedisManager(environment=env)
     redis_manager.delete_index(index, dd)
 
 
 @cli.command()
 @click.option(
-    "--environment",
+    "--env",
     default="local",
     help="Environment to use (local, dev, prod)",
 )
 @click.option("--prefix", required=True, help="Document prefix to clear")
-def clear_documents(environment: str, prefix: str):
-    """Clear all documents with the given prefix."""
-    redis_manager = RedisManager(environment=environment)
+def clear_documents(env: str, prefix: str):
+    """
+    Remove all documents with the specified key prefix from Redis.
+
+    Currently defaults to utilizing the YAML config for determine the Redis
+    connection parameters, based on the environment.
+
+    Parameters
+    ----------
+    environment : str
+        The deployment environment (local, dev, prod)
+    prefix : str
+        Key prefix pattern to match documents for deletion.
+        All documents whose keys start with this prefix will be removed.
+
+    Notes
+    -----
+    This operation performs a scan operation and deletes documents in batches
+    to prevent memory issues with large document sets.
+
+    Examples
+    --------
+    $ python manage.py clear-documents --env local --prefix doc:
+    """
+    redis_manager = RedisManager(environment=env)
     redis_manager.clear_documents(prefix)
 
 
