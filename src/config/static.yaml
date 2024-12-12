@@ -23,7 +23,7 @@ llm_models:
     endpoint: "https://api.openai.com/v1/chat/completions"
     provider: "openai"
 
-  claude-3-5-sonnet:
+  claude-3-5-sonnet-20240620:
     name: "claude-3-5-sonnet-20240620"
     model: "claude-3-5-sonnet"
     temperature: 0.0

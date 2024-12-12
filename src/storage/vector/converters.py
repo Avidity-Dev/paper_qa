@@ -132,9 +132,6 @@ class AdapterFactory:
     ) -> DocumentAdapter:
         """Get appropriate adapter for the given source and target types."""
         if source_type == target_type:
-            logger.info(
-                f"No adapter needed for conversion from {source_type} to {target_type}"
-            )
             return
         adapter_class = cls._adapters.get((source_type, target_type))
         if adapter_class is None:
@@ -270,48 +267,3 @@ class LCVectorStorePipeline(BaseVectorStorePipeline):
         """Ensure the vector store is set. If not set, cease execution."""
         if not self.vector_store:
             raise PipelineError("Vector store not set. Cannot continue execution.")
-
-
-# Example of adding a new document type and adapter
-class CustomDoc:
-    """Example custom document type."""
-
-    def __init__(self, content: str, metadata: dict):
-        self.content = content
-        self.metadata = metadata
-
-
-class CustomDocAdapter(DocumentAdapter[LCDocument, CustomDoc]):
-    """Example adapter for custom document type."""
-
-    def convert(self, doc: LCDocument) -> CustomDoc:
-        return CustomDoc(content=doc.page_content, metadata=doc.metadata)
-
-    def convert_back(self, doc: CustomDoc) -> LCDocument:
-        return LCDocument(page_content=doc.content, metadata=doc.metadata)
-
-
-# Usage example
-async def main():
-    # Register new document type and adapter
-    class CustomDocType(TextStorageType):
-        CUSTOM = auto()
-
-    AdapterFactory.register_adapter(
-        TextStorageType.LANGCHAIN, CustomDocType.CUSTOM, CustomDocAdapter
-    )
-
-    # Initialize vector store wrapper
-    vector_store = LCVectorStore(...)
-    wrapper = LCVectorStorePipeline(vector_store, target_type=CustomDocType.CUSTOM)
-
-    # Add documents
-    custom_docs = [CustomDoc(...)]
-    added, errors = await wrapper.add_documents(
-        custom_docs, source_type=CustomDocType.CUSTOM
-    )
-
-    # Search
-    results = await wrapper.search(
-        query_embedding=[...], k=5, use_mmr=True
-    )  # Results will be CustomDoc objects

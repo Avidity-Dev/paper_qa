@@ -105,11 +105,10 @@ class RedisIndexBuilder(IndexBuilder):
         self.key_prefix = key_prefix
         self.store_type = store_type.lower()
         self.schema = schema
-        self.recreate_index = recreate_index
 
-        logger.info(f"Store type: {self.store_type}")
-
-    def build_index(self, **kwargs: Any) -> RedisModel:
+    def build_index(
+        self, recreate_index: bool = False, **kwargs: Any
+    ) -> Optional[RedisModel]:
         """
         Build the Redis index using the RedisModel and schema logic provided by langchain_community.
 
@@ -126,11 +125,13 @@ class RedisIndexBuilder(IndexBuilder):
             The RedisModel built from the schema.
         """
 
-        try:
-            self.redis_client.ft(self.index_name).dropindex(delete_documents=True)
-            logger.info(f"Dropped existing index: {self.index_name}")
-        except Exception:
-            pass
+        if recreate_index:
+            try:
+                self.redis_client.ft(self.index_name).dropindex(delete_documents=True)
+                logger.info(f"Dropped existing index: {self.index_name}")
+            except Exception:
+                logger.info(f"Index {self.index_name} does not exist. Skipping drop.")
+                return None
 
         if not self._index_exists():
             # Need to extract the vector definition from the schema since the langchain
@@ -138,7 +139,6 @@ class RedisIndexBuilder(IndexBuilder):
             # in separately.
             model = RedisModel()
             schema = read_schema(self.schema)
-            print(f"Schema: {schema}\n")
             vector_schema = schema.pop("vector")[0]
             model.add_vector_field(vector_schema)
             fields = model.get_fields()
@@ -155,9 +155,12 @@ class RedisIndexBuilder(IndexBuilder):
             self.redis_client.ft(self.index_name).create_index(
                 fields=fields, definition=definition
             )
-            logger.info(f"Created index: {self.index_name}")
+            logger.info(
+                f"Created index: {self.index_name}. Store type: {self.store_type}"
+            )
         else:
             logger.info(f"Index {self.index_name} already exists. Skipping creation.")
+            return None
 
         return model
 

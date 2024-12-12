@@ -38,35 +38,43 @@ class RedisManager:
             environment=environment
         )
 
+    def _get_redis_client(self) -> redis.Redis:
+        return redis.Redis.from_url(self.app_config.vector_db_url)
+
     def create_index(
         self, config: Union[Dict[str, Any], os.PathLike[str]] = INDEX_SCHEMA_PATH
     ) -> None:
-        redis_client = redis.Redis.from_url(self.app_config.vector_db_url)
+        redis_client = self._get_redis_client()
         index_builder = RedisIndexBuilder(
             redis_client=redis_client,
-            index_name=self.app_config.vector_db_index_name,
-            key_prefix=self.app_config.vector_db_index_prefix,
-            store_type="redis",
+            index_name=self.app_config.index_name,
+            key_prefix=self.app_config.index_prefix,
+            store_type=self.app_config.index_type,
             schema=config,
         )
-        index_builder.build_index()
+        index_builder.build_index(recreate_index=False)
 
-    def delete_index(self, index_name: str) -> None:
+    def delete_index(self, index_name: str, drop_documents: bool = True) -> None:
         """Deletes a Redis index and all its documents."""
+        redis_client = self._get_redis_client()
+        drop_command = "DD" if drop_documents else ""
         try:
-            self.client.execute_command(f"FT.DROPINDEX {index_name} DD")
-            click.echo(f"Successfully deleted index '{index_name}'")
+            redis_client.execute_command(f"FT.DROPINDEX {index_name} {drop_command}")
+            click.echo(
+                f"Successfully deleted index '{index_name}'. Drop documents: {drop_documents}"
+            )
         except redis.exceptions.ResponseError as e:
-            click.echo(f"Error deleting index: {str(e)}")
+            click.echo(f"Error deleting index: {str(e)}. The index may not exist.")
 
     def clear_documents(self, prefix: str) -> None:
         """Deletes all documents with the given prefix."""
+        redis_client = self._get_redis_client()
         try:
             cursor = 0
             while True:
-                cursor, keys = self.client.scan(cursor, match=f"{prefix}*", count=100)
+                cursor, keys = redis_client.scan(cursor, match=f"{prefix}*", count=100)
                 if keys:
-                    self.client.delete(*keys)
+                    redis_client.delete(*keys)
                 if cursor == 0:
                     break
             click.echo(f"Successfully cleared all documents with prefix '{prefix}'")
@@ -91,42 +99,50 @@ def cli():
 
 
 @cli.command()
-@click.option("--host", default="localhost", help="Redis host")
-@click.option("--port", default=6379, help="Redis port")
+@click.option(
+    "--environment",
+    default="local",
+    help="Environment to use (local, dev, prod)",
+)
 @click.option(
     "--config_file",
-    required=True,
+    default=INDEX_SCHEMA_PATH,
     type=click.Path(exists=True),
     help="Path to index config YAML file",
 )
-def create_index(host: str, port: int, config: str):
+def create_index(environment: str, config_file: str):
     """Create a Redis index from a YAML configuration file."""
-    with open(config, "r") as f:
+    with open(config_file, "r") as f:
         config_data = yaml.safe_load(f)
 
-    redis_manager = RedisManager(host=host, port=port)
+    redis_manager = RedisManager(environment=environment)
     redis_manager.create_index(config_data)
 
 
 @cli.command()
-@click.option("--host", default="localhost", help="Redis host")
-@click.option("--port", default=6379, help="Redis port")
-@click.option("--index", required=True, help="Name of the index to delete")
-@click.option("--prefix", required=True, help="Document prefix to clear")
-def delete_index_and_documents(host: str, port: int, index: str, prefix: str):
+@click.option(
+    "--environment",
+    default="local",
+    help="Environment to use (local, dev, prod)",
+)
+@click.argument("index", type=click.STRING, required=True)
+@click.option("--dd", default=True, is_flag=True, help="Drop documents from index")
+def delete_index(environment: str, index: str, dd: bool):
     """Delete a Redis index and all its documents."""
-    redis_manager = RedisManager(host=host, port=port)
-    redis_manager.delete_index(index)
-    redis_manager.clear_documents(prefix)
+    redis_manager = RedisManager(environment=environment)
+    redis_manager.delete_index(index, dd)
 
 
 @cli.command()
-@click.option("--host", default="localhost", help="Redis host")
-@click.option("--port", default=6379, help="Redis port")
+@click.option(
+    "--environment",
+    default="local",
+    help="Environment to use (local, dev, prod)",
+)
 @click.option("--prefix", required=True, help="Document prefix to clear")
-def clear_documents(host: str, port: int, prefix: str):
+def clear_documents(environment: str, prefix: str):
     """Clear all documents with the given prefix."""
-    redis_manager = RedisManager(host=host, port=port)
+    redis_manager = RedisManager(environment=environment)
     redis_manager.clear_documents(prefix)
 
 

@@ -9,8 +9,12 @@ import yaml
 import os
 from functools import lru_cache
 
+from dotenv import load_dotenv
 from redis.commands.search.field import NumericField, TagField, TextField, VectorField
 from redis.commands.search.indexDefinition import IndexDefinition, IndexType
+
+
+load_dotenv()
 
 # Set defaults for local dev but could change during deployment
 INDEX_SCHEMA_PATH = os.getenv("REDIS_VECTOR_CONFIG_PATH")
@@ -78,12 +82,13 @@ class AppConfig:
     """
 
     vector_db_url: str
+    index_type: str  # json or hash for redis
     index_name: str
     index_prefix: str
     counter_key: str
-    embedding_config: Tuple[str, EmbeddingConfig]
-    llm_config: Tuple[str, LLMConfig]
-    summary_llm_config: Tuple[str, LLMConfig]
+    embedding_model: str
+    llm_model: str
+    summary_llm_model: str
     environment: str
 
 
@@ -99,6 +104,7 @@ class ConfigurationManager:
         # Uninitialized configs
         self._llm_configs: Dict[str, LLMConfig]
         self._embedding_configs: Dict[str, EmbeddingConfig]
+        self._app_config: AppConfig
 
         # Store the paths used to initialize the configs
         self._init_app_config_fp = app_config_path
@@ -154,24 +160,25 @@ class ConfigurationManager:
 
     def init_app_config(self, environment: str = "local") -> AppConfig:
         """Load application configuration from YAML file."""
-        with open(self._app_config_path, "r") as f:
-            self._app_config = yaml.safe_load(f)
+        with open(self._init_app_config_fp, "r") as f:
+            config_dict = yaml.safe_load(f)
 
-        self._app_config["environment"] = environment
+        app_config_dict = config_dict[environment]
 
-        llm_model = self._app_config[environment]["llm_model"]
-        summary_llm_model = self._app_config[environment]["summary_llm_model"]
-        embedding_model = self._app_config[environment]["embedding_model"]
+        llm_model = app_config_dict["llm_model"]
+        summary_llm_model = app_config_dict["summary_llm_model"]
+        embedding_model = app_config_dict["embedding_model"]
 
         try:
-            self._app_config.llm_config = self._llm_configs[llm_model]
-            self._app_config.summary_llm_config = self._llm_configs[summary_llm_model]
-            self._app_config.embedding_config = self._embedding_configs[embedding_model]
+            app_config_dict["llm_model"] = llm_model
+            app_config_dict["summary_llm_model"] = summary_llm_model
+            app_config_dict["embedding_model"] = embedding_model
+            app_config_dict["environment"] = environment
         except KeyError as e:
-            raise ValueError(
+            raise KeyError(
                 f"Error during default configuration initialization: {e}"
             ) from e
-
+        self.app_config = AppConfig(**app_config_dict)
         return self.app_config
 
     def _get_api_key(self, provider: str) -> str:
