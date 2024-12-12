@@ -1,47 +1,57 @@
 text:
-  - name: text
+  - name: $.text
     weight: 1.0
     no_stem: false
     sortable: false
-  - name: title
+    as_name: text
+  - name: $.name
     weight: 1.0
     no_stem: false
     sortable: false
-  - name: dockey
+    as_name: name
+  - name: $.dockey
     weight: 1.0
     no_stem: true
-  - name: doi
+    as_name: dockey
+  - name: $.doi
     weight: 1.0
     no_stem: true
-  - name: citation
+    as_name: doi
+  - name: $.citation
     weight: 1.0
     no_stem: true
-  - name: journal
+    as_name: citation
+  - name: $.journal
     weight: 1.0
     no_stem: true
-  - name: volume
+    as_name: journal
+  - name: $.volume
     weight: 1.0
     no_stem: true
-  - name: issue
+    as_name: volume
+  - name: $.issue
     weight: 1.0
     no_stem: true
-  - name: authors
+    as_name: issue
+  - name: $.authors
     weight: 1.0
     no_stem: true
 
 numeric:
-  - name: published_date
+  - name: $.published_date
     sortable: true
-  - name: created_at
+    as_name: published_date
+  - name: $.created_at
     sortable: true
+    as_name: created_at
 
 vector:
-  - name: embedding
-    type: FLAT
-    dims: 1536
+  - name: $.embedding
+    algorithm: FLAT
     datatype: FLOAT32
+    dims: 1536
     distance_metric: COSINE
-    initial_cap: 1000
+    as_name: embedding
 
 content_key: text
 content_vector_key: embedding

@@ -1,5 +1,9 @@
 local:
-  default_embedding_model: "openai-small"
-  default_llm_model: "gpt-4o"
-  default_summary_llm_model: "gpt-4o"
-  vector_db_port: 6379
+  embedding_model: "text-embedding-3-small"
+  llm_model: "claude-3-5-sonnet-20240620"
+  summary_llm_model: "claude-3-5-sonnet-20240620"
+  vector_db_url: "redis://localhost:6379"
+  index_type: "json"
+  index_name: "idx:docs"
+  index_prefix: "docs:"
+  counter_key: "docs:counter"

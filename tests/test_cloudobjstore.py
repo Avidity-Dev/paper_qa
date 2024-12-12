@@ -12,7 +12,8 @@ dotenv.load_dotenv()
 @pytest.mark.asyncio
 async def test_azure_blob_connection():
     blob_connection_string = os.getenv("AZURE_BLOB_CONNECTION_STRING")
-    blob_store = AzureBlobStore(blob_connection_string, "papers")
+    blob_container_name = os.getenv("AZURE_BLOB_CONTAINER_NAME")
+    blob_store = AzureBlobStore(blob_connection_string, blob_container_name)
     async with blob_store as blob_store:
         assert blob_store.blob_service_client is not None
         assert blob_store.container_client is not None
@@ -21,7 +22,8 @@ async def test_azure_blob_connection():
 @pytest.mark.asyncio
 async def test_azure_blob_upload_and_delete():
     blob_connection_string = os.getenv("AZURE_BLOB_CONNECTION_STRING")
-    blob_store = AzureBlobStore(blob_connection_string, "test")
+    blob_container_name = os.getenv("AZURE_BLOB_CONTAINER_NAME")
+    blob_store = AzureBlobStore(blob_connection_string, blob_container_name)
     async with blob_store as blob_store:
         await blob_store.upload_file(b"test", "test.txt")
 
@@ -32,7 +34,8 @@ async def test_azure_blob_upload_and_delete():
 @pytest.mark.asyncio
 async def test_azure_blob_list_files():
     blob_connection_string = os.getenv("AZURE_BLOB_CONNECTION_STRING")
-    blob_store = AzureBlobStore(blob_connection_string, "papers")
+    blob_container_name = os.getenv("AZURE_BLOB_CONTAINER_NAME")
+    blob_store = AzureBlobStore(blob_connection_string, blob_container_name)
     async with blob_store as blob_store:
         files = await blob_store.list_files()
         assert len(files) > 0
@@ -42,7 +45,8 @@ async def test_azure_blob_list_files():
 @pytest.mark.asyncio
 async def test_azure_blob_download_files():
     blob_connection_string = os.getenv("AZURE_BLOB_CONNECTION_STRING")
-    blob_store = AzureBlobStore(blob_connection_string, "papers")
+    blob_container_name = os.getenv("AZURE_BLOB_CONTAINER_NAME")
+    blob_store = AzureBlobStore(blob_connection_string, blob_container_name)
     async with blob_store as blob_store:
         files = await blob_store.list_files()
         assert len(files) > 0
