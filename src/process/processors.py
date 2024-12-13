@@ -38,6 +38,7 @@ from src.process.metadata import (
     pqa_extract_publication_metadata,
     unpack_metadata,
     pqa_build_mla,
+    enrich_metadata_list
 )
 from src.storage.vector.converters import (
     LCVectorStorePipeline,
@@ -366,20 +367,11 @@ class PQAProcessor:
         """
         return self._vector_store_pipeline.vector_store
 
-    async def extract_metadata(self, text: str, metadata_keys: list[str]) -> dict:
-        """Extract metadata from a text input."""
-
-        metadata = await pqa_extract_publication_metadata(
-            text=text, metadata_keys=metadata_keys, llm=self.llm
-        )
-        metadata["citation"] = await pqa_build_mla(llm=self.llm, metadata=metadata)
-
-        return metadata
-
     async def process_documents(
         self,
         input: List[Union[os.PathLike, bytes, str, BytesIO]],
         metadata_keys: list[str],
+        mailto: Optional[str] = None
     ) -> list[str]:
         """
         Driver function for processing a list of documents and storing basic metadata.
@@ -389,6 +381,7 @@ class PQAProcessor:
         input: List[Union[os.PathLike, bytes, str, BytesIO]]
             List of documents to process.
         """
+        keys = []
         for doc in input:
             try:
                 chunks = self.chunk_pdf(doc)
@@ -396,9 +389,19 @@ class PQAProcessor:
 
                 # Extract metadata from the first two chunks
                 chunk = " ".join(chunks[0:2])
-                metadata = await self.extract_metadata(chunk, metadata_keys)
-                metadata = [metadata] * len(chunks)
-
+                metadata = await enrich_metadata_list(
+                    metadata_list=[{}],
+                    llm=self.llm,
+                    text_chunks=[chunk],
+                    metadata_keys=metadata_keys,
+                    mailto=mailto
+                )
+                metadata = [metadata[0]] * len(chunks)
+                
+                # Add MLA citation to metadata
+                metadata[0]["citation"] = await pqa_build_mla(llm=self.llm, **metadata[0])
+                metadata = [metadata[0]] * len(chunks)  
+                
                 keys = await self.vector_store_pipeline.add_texts(
                     chunks, metadatas=metadata, embeddings=embeddings
                 )
