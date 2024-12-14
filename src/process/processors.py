@@ -12,7 +12,7 @@ import warnings
 import logging
 from io import BytesIO
 import sys
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 import os
 
 from dotenv import load_dotenv
@@ -32,12 +32,12 @@ import tiktoken
 from src.storage.vector.stores import (
     PQAPineconeVectorStore,
     PQARedisVectorStore,
+    RedisVectorStore,
 )
-from src.models import PQADocument
+from src.models import DocumentMetadata, PQADocument
 from src.process.metadata import (
-    pqa_extract_publication_metadata,
-    unpack_metadata,
     pqa_build_mla,
+    extract_and_enrich_metadata,
 )
 from src.storage.vector.converters import (
     LCVectorStorePipeline,
@@ -55,8 +55,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 load_dotenv()
-
-print(os.getenv("ANTHROPIC_API_KEY"))
 
 local_llm_config = dict(
     model_list=[
@@ -90,7 +88,8 @@ class PQADocumentProcessor:
     def __init__(
         self,
         pqa_settings: pqa.Settings,
-        vector_db: PQARedisVectorStore,
+        vector_db: RedisVectorStore,
+        metadata_keys: list[str] = DocumentMetadata.keys(),
     ):
         """
         Initialize the document processor.
@@ -107,27 +106,31 @@ class PQADocumentProcessor:
         warnings.filterwarnings("ignore", message=".*Provider.*")
 
         self._settings = pqa_settings
-        self._vector_db = vector_db
+        self._vector_db: RedisVectorStore = vector_db
+        self._metadata_keys = metadata_keys
 
-    async def build_doc(
+    @property
+    def vector_db(self) -> RedisVectorStore:
+        """Get the underlying vector store for operations that do not require
+        document type conversion.
+        """
+        return self._vector_db
+
+    async def chunk_and_embed(
         self, input: Union[os.PathLike, bytes, str, BytesIO]
-    ) -> PQADocument:
-        """Process a single document and return a BasicDoc object."""
+    ) -> tuple[list[str], list[float]]:
+        """Process a single document and return a tuple of chunks and embeddings."""
         try:
             chunks = self.chunk_pdf(input)
+            # Utilize paper-qa to retrieve general embeddings
             embedding_model = self._settings.get_embedding_model()
             embeddings = await embedding_model.embed_documents(chunks)
-            # TODO: Extract metadata from the document
-            # self.extract_metadata(embeddings)
 
         except Exception as e:
             logger.error(f"Error building document: {str(e)}", exc_info=True)
             raise
 
-        return PQADocument(
-            text_chunks=chunks,
-            embeddings=embeddings,
-        )
+        return chunks, embeddings
 
     async def process_documents(
         self, input: List[Union[os.PathLike, bytes, str, BytesIO]]
@@ -140,11 +143,32 @@ class PQADocumentProcessor:
         input: List[Union[os.PathLike, bytes, str, BytesIO]]
             List of documents to process.
         """
+        processed_docs: list[tuple[dict, list[str]]] = []
+
         for _doc in input:
             try:
-                doc = await self.build_doc(_doc)
-                keys = self._vector_db.add_texts_and_embeddings([doc])
-                logger.info(f"Added document with keys: {keys}")
+                chunks, embeddings = await self.chunk_and_embed(_doc)
+
+                # Take the first two chunks to extract metadata
+                chunk = " ".join(chunks[0:2])
+                metadata = await extract_and_enrich_metadata(
+                    llm=self.llm,
+                    text_chunks=[chunk],
+                    metadata_keys=self._metadata_keys,
+                )
+
+                # Add MLA citation to metadata if not already present
+                if not metadata[0].get("citation"):
+                    metadata[0]["citation"] = await pqa_build_mla(
+                        llm=self.llm, **metadata[0]
+                    )
+                metadata = [metadata[0]] * len(chunks)
+
+                keys = await self.vector_db.add_texts(
+                    texts=chunks, metadatas=metadata, embeddings=embeddings
+                )
+                processed_docs.append((metadata, keys))
+                logger.info(f"Processed document:\n{_doc}\nwith {len(keys)} chunks.")
             except Exception as e:
                 logger.error(f"Error processing document {_doc}: {str(e)}\nSkipping...")
                 raise
@@ -324,7 +348,8 @@ class PQAProcessor:
     def __init__(
         self,
         pqa_settings: pqa.Settings,
-        vector_store_pipeline: BaseVectorStorePipeline = LCVectorStorePipeline(),
+        vector_db: RedisVectorStore,
+        metadata_keys: list[str] = DocumentMetadata.keys(),
     ):
         """
         Initialize the document processor.
@@ -342,7 +367,8 @@ class PQAProcessor:
 
         self._settings: pqa.Settings = pqa_settings
         self._llm: LiteLLMModel = self.llm
-        self._vector_store_pipeline: BaseVectorStorePipeline = vector_store_pipeline
+        self._metadata_keys: list[str] = metadata_keys
+        self._vector_db: RedisVectorStore = vector_db
 
     @property
     def llm(self) -> LiteLLMModel:
@@ -355,32 +381,31 @@ class PQAProcessor:
         return self._settings.get_embedding_model()
 
     @property
-    def vector_store_pipeline(self) -> BaseVectorStorePipeline:
-        """Get the vector store pipeline."""
-        return self._vector_store_pipeline
-
-    @property
-    def vector_store(self) -> LCVectorStore:
+    def vector_store(self) -> RedisVectorStore:
         """Get the underlying vector store for operations that do not require
         document type conversion.
         """
-        return self._vector_store_pipeline.vector_store
+        return self._vector_db
 
-    async def extract_metadata(self, text: str, metadata_keys: list[str]) -> dict:
-        """Extract metadata from a text input."""
+    async def chunk_and_embed(
+        self, input: Union[os.PathLike, bytes, str, BytesIO]
+    ) -> tuple[list[str], list[float]]:
+        """Process a single document and return a tuple of chunks and embeddings."""
+        try:
+            chunks = self.chunk_pdf(input)
+            # Utilize paper-qa to retrieve general embeddings
+            embedding_model = self._settings.get_embedding_model()
+            embeddings = await embedding_model.embed_documents(chunks)
 
-        metadata = await pqa_extract_publication_metadata(
-            text=text, metadata_keys=metadata_keys, llm=self.llm
-        )
-        metadata["citation"] = await pqa_build_mla(llm=self.llm, metadata=metadata)
+        except Exception as e:
+            logger.error(f"Error building document: {str(e)}", exc_info=True)
+            raise
 
-        return metadata
+        return chunks, embeddings
 
     async def process_documents(
-        self,
-        input: List[Union[os.PathLike, bytes, str, BytesIO]],
-        metadata_keys: list[str],
-    ) -> list[str]:
+        self, input: List[Union[os.PathLike, bytes, str, BytesIO]]
+    ) -> list[tuple[dict, list[str]]]:
         """
         Driver function for processing a list of documents and storing basic metadata.
 
@@ -389,25 +414,41 @@ class PQAProcessor:
         input: List[Union[os.PathLike, bytes, str, BytesIO]]
             List of documents to process.
         """
-        for doc in input:
+        processed_docs: list[tuple[dict, list[str]]] = []
+
+        for _doc in input:
             try:
-                chunks = self.chunk_pdf(doc)
-                embeddings = await self.embedding_model.embed_documents(chunks)
+                chunks, embeddings = await self.chunk_and_embed(_doc)
 
-                # Extract metadata from the first two chunks
+                # Take the first two chunks to extract metadata
                 chunk = " ".join(chunks[0:2])
-                metadata = await self.extract_metadata(chunk, metadata_keys)
-                metadata = [metadata] * len(chunks)
-
-                keys = await self.vector_store_pipeline.add_texts(
-                    chunks, metadatas=metadata, embeddings=embeddings
+                metadata = await extract_and_enrich_metadata(
+                    llm=self.llm,
+                    text_chunks=[chunk],
+                    metadata_keys=self._metadata_keys,
                 )
-                logger.info(f"Added document with keys: {keys}")
-            except Exception as e:
-                logger.error(f"Error processing document {doc}: {str(e)}\nSkipping...")
-                continue
 
-        return keys
+                # Add MLA citation to metadata if not already present
+                if not metadata[0].get("citation"):
+                    metadata[0]["citation"] = await pqa_build_mla(
+                        llm=self.llm, **metadata[0]
+                    )
+                metadatas = [metadata[0]] * len(chunks)
+
+                keys = await self.vector_store.add_texts(
+                    texts=chunks, metadatas=metadatas, embeddings=embeddings
+                )
+                processed_docs.append((metadata, keys))
+                logger.info(
+                    f"Processed document:\n{metadata}\nwith {len(keys)} chunks."
+                )
+            except Exception as e:
+                logger.error(
+                    f"Error processing document {metadata}: {str(e)}\nSkipping..."
+                )
+                raise
+
+        return processed_docs
 
     @staticmethod
     def chunk_pdf(
@@ -426,7 +467,7 @@ class PQAProcessor:
             if isinstance(input, (os.PathLike, str)):
                 parsed_text = pqa_parse_pdf_to_pages(input)
             elif isinstance(input, (bytes, BytesIO)):
-                parsed_text = PQADocumentProcessor.parse_pdf_bytes_to_pages(input)
+                parsed_text = PQAProcessor.parse_pdf_bytes_to_pages(input)
             else:
                 raise ValueError(f"Unsupported input type: {type(input)}")
         except Exception as e:

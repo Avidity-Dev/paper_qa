@@ -203,4 +203,4 @@ class RedisKeyManager:
         key_num_strs = [str(i) for i in range(start_id, new_ctr + 1)]
         key_nums = [key_num_str.zfill(self.key_padding) for key_num_str in key_num_strs]
 
-        return [f"{self.key_prefix}:{key_num}" for key_num in key_nums]
+        return [f"{self.key_prefix}{key_num}" for key_num in key_nums]

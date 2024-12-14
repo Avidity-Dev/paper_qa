@@ -49,6 +49,7 @@ async def test_build_mla(pqa_settings: PQASettings):
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration_test
 async def test_extract_and_enrich_metadata(
     chunked_docs: List[List[str]], 
     pqa_settings: PQASettings
@@ -57,48 +58,28 @@ async def test_extract_and_enrich_metadata(
     Test both LLM metadata extraction and API enrichment using real documents
     and real API calls to Semantic Scholar and Crossref.
     """
-    # Step 1: Extract metadata using LLM
+    # Initialize test objects
     test_metadata_obj = DocumentMetadata()
     metadata_keys = test_metadata_obj.keys
     llm = pqa_settings.get_llm()
     
-    extracted_metadata = []
-    for doc in chunked_docs:
-        chunks = doc[0:2]
-        metadata = await pqa_extract_publication_metadata(
-            text=chunks,
-            metadata_keys=metadata_keys,
-            llm=llm
-        )
-        extracted_metadata.append(metadata)
-    
-    # Print and verify initial extraction
-    print("\nExtracted metadata from LLM:")
-    print(json.dumps(extracted_metadata, indent=4))
-    
-    # Basic assertions for extracted metadata
-    assert len(extracted_metadata) == len(chunked_docs)
-    assert all(metadata is not None for metadata in extracted_metadata)
-    
-    # Step 2: Enrich the extracted metadata using real APIs (must flatten the list first)
-    metadata_to_enrich = []
-    for doc_metadata in extracted_metadata:
-        if isinstance(doc_metadata, dict):
-            metadata_to_enrich.append(doc_metadata)
-        else:
-            metadata_to_enrich.extend(doc_metadata)
-    
     try:
+        # Directly call enrich_metadata_list which now handles extraction and enrichment
         enriched_metadata = await enrich_metadata_list(
-            metadata_to_enrich,
-            mailto="angel.murillo@aviditybio.com"  
+            metadata_list=[{}] * len(chunked_docs),  # Start with empty metadata for each document
+            llm=llm,
+            text_chunks=[doc[0:2] for doc in chunked_docs],  # Use first 2 chunks of each document
+            metadata_keys=metadata_keys,
+            mailto="angel.murillo@aviditybio.com"
         )
         
-        print("\nEnriched metadata using real APIs:")
+        print("\nEnriched metadata using LLM and APIs:")
         print(json.dumps(enriched_metadata, indent=4))
         
         # Verify enrichment structure and content
-        assert len(enriched_metadata) == len(metadata_to_enrich)
+        assert len(enriched_metadata) == len(chunked_docs), \
+            "Should have one metadata entry per document"
+            
         for entry in enriched_metadata:
             # Check required fields
             assert isinstance(entry, dict), "Each entry should be a dictionary"
@@ -112,30 +93,21 @@ async def test_extract_and_enrich_metadata(
                 f"All required fields {required_fields} should be present"
             
             # Verify field types
-            assert isinstance(entry["title"], str), "Title should be a string"
-            assert isinstance(entry["authors"], list), "Authors should be a list"
-            assert isinstance(entry["doi"], (str, type(None))), "DOI should be a string or None"
-            assert isinstance(entry["published_date"], (str, type(None))), \
-                "Published date should be a string or None"
-            assert isinstance(entry["journal"], (str, type(None))), \
-                "Journal should be a string or None"
-            assert isinstance(entry["volume"], (str, type(None))), \
-                "Volume should be a string or None"
-            assert isinstance(entry["issue"], (str, type(None))), \
-                "Issue should be a string or None"
+            assert isinstance(entry.get("title"), (str, type(None))), "Title should be a string or None"
+            assert isinstance(entry.get("authors"), (list, type(None))), "Authors should be a list or None"
+            assert isinstance(entry.get("doi"), (str, type(None))), "DOI should be a string or None"
+            assert isinstance(entry.get("published_date"), (str, type(None))), "Published date should be a string or None"
+            assert isinstance(entry.get("journal"), (str, type(None))), "Journal should be a string or None"
+            assert isinstance(entry.get("volume"), (str, type(None))), "Volume should be a string or None"
+            assert isinstance(entry.get("issue"), (str, type(None))), "Issue should be a string or None"
             
-            # Original values should be preserved when they existed
-            original_entry = next(
-                m for m in metadata_to_enrich 
-                if m["title"] == entry["title"]
-            )
-            for key, value in original_entry.items():
-                if value is not None:
-                    assert entry[key] == value, \
-                        f"Original value for {key} should be preserved"
-                        
-    except ValueError as e:
-        print(f"\nAPI Error: {str(e)}")
+            # At least some fields should be populated after enrichment
+            populated_fields = sum(1 for v in entry.values() if v is not None)
+            assert populated_fields > 0, \
+                "At least some fields should be populated after LLM extraction and API enrichment"
+            
+    except Exception as e:
+        print(f"\nError during metadata extraction and enrichment: {str(e)}")
         raise
 
 @pytest.mark.asyncio

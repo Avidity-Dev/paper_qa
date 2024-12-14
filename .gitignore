@@ -28,6 +28,7 @@ data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+.vscode/
 
 # Streamlit secrets
 .streamlit/secrets.toml

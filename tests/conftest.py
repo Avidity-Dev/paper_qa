@@ -6,7 +6,7 @@ from paperqa.settings import Settings as PQASettings
 import pymupdf
 import pytest
 
-from src.config.config import ConfigurationManager
+from src.config.config import INDEX_SCHEMA_PATH, ConfigurationManager, AppConfig
 from src.models import PQADocument
 from src.process.processors import PQADocumentProcessor
 from src.storage.vector.stores import RedisVectorStore
@@ -25,6 +25,13 @@ local_llm_config = dict(
         )
     ]
 )
+
+
+@pytest.fixture
+def app_settings() -> AppConfig:
+    config = ConfigurationManager()
+    config.init_app_config(environment="local")
+    return config.app_config
 
 
 # Hard coding index schema based off the model
@@ -57,14 +64,13 @@ def index_schema_dict() -> dict:
 
 
 @pytest.fixture
-def local_redis_vector_db(index_schema_dict: dict) -> RedisVectorStore:
+def local_redis_vector_db(app_settings: AppConfig) -> RedisVectorStore:
     return RedisVectorStore(
-        redis_url="redis://localhost:6379",
-        index_name="idx:docs_vss",
-        key_prefix="docs",
-        index_schema=index_schema_dict,
-        counter_key="docs_ctr",
-        key_padding=4,
+        redis_url=app_settings.vector_db_url,
+        index_name=app_settings.index_name,
+        key_prefix=app_settings.index_prefix,
+        schema=INDEX_SCHEMA_PATH,
+        counter_key=app_settings.counter_key,
     )
 
 
