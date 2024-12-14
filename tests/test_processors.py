@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import dotenv
 import numpy as np
 
-from src.config.config import ConfigurationManager, INDEX_SCHEMA
+from src.config.config import ConfigurationManager, INDEX_SCHEMA_PATH, AppConfig
 from src.process.processors import PQADocumentProcessor, PQAProcessor
 from src.storage.vector.stores import RedisVectorStore, PQARedisVectorStore
 
@@ -89,21 +89,24 @@ async def test_process_documents(docs_list_bytes: list[bytes]):
     keys = await processor.process_documents(docs_list_bytes)
     print(keys)
     assert len(keys) > 0
-    
+
+
+@pytest.mark.integration_test
 @pytest.mark.asyncio
-async def test_process_documents(docs_list_bytes: list[bytes]):
-    # Create mock for Redis vector store
-    mock_redis_store = MagicMock(spec=PQARedisVectorStore)
-    mock_redis_store.add_texts_and_embeddings.return_value = ["key1", "key2"]
+async def test_process_documents_new(
+    docs_list_bytes: list[bytes], local_redis_vector_db: RedisVectorStore
+):
+    pqa_settings = PQASettings(
+        llm="claude-3-5-sonnet-20240620",
+        llm_config=local_llm_config,
+        summary_llm="claude-3-5-sonnet-20240620",
+        summary_llm_config=local_llm_config,
+    )
+    processor = PQAProcessor(pqa_settings, local_redis_vector_db)
+    client = local_redis_vector_db.client
+    keys = await processor.process_documents(docs_list_bytes)
+    # get the first key
+    key = keys[0][1][0]
 
-    mock_settings = MagicMock(spec=PQASettings)
-    
-    processor = PQAProcessor(mock_settings, mock_redis_store)
-    metadata_keys = ["meta_key1", "meta_key2"]
-    
-    keys = await processor.process_documents(docs_list_bytes, metadata_keys)
-    assert len(keys) > 0
-
-
-
-
+    # Check that the first key exists in the vector store index
+    assert client.exists(key) == 1

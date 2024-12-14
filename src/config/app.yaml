@@ -5,5 +5,5 @@ local:
   vector_db_url: "redis://localhost:6379"
   index_type: "json"
   index_name: "idx:docs"
-  index_prefix: "docs:"
+  index_prefix: "doc:"
   counter_key: "docs:counter"

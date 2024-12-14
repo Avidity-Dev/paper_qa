@@ -81,7 +81,6 @@ class RedisIndexBuilder(IndexBuilder):
         key_prefix: str,
         store_type: str,
         schema: Optional[Union[Dict[str, List[Any]], str, os.PathLike]],
-        recreate_index: bool = False,
     ):
         """
         Parameters
@@ -133,23 +132,22 @@ class RedisIndexBuilder(IndexBuilder):
                 logger.info(f"Index {self.index_name} does not exist. Skipping drop.")
                 return None
 
+        # Need to extract the vector definition from the schema since the langchain
+        # library expects the index definition and vector definitions to be passed
+        # in separately.
+        model = RedisModel()
+        schema = read_schema(self.schema)
+        vector_schema = schema.pop("vector")[0]
+        model.add_vector_field(vector_schema)
+        fields = model.get_fields()
+
+        # Determine index type based on store_type
+        index_type = IndexType.JSON if self.store_type == "json" else IndexType.HASH
+
+        # Create the index definition
+        definition = IndexDefinition(prefix=[self.key_prefix], index_type=index_type)
+
         if not self._index_exists():
-            # Need to extract the vector definition from the schema since the langchain
-            # library expects the index definition and vector definitions to be passed
-            # in separately.
-            model = RedisModel()
-            schema = read_schema(self.schema)
-            vector_schema = schema.pop("vector")[0]
-            model.add_vector_field(vector_schema)
-            fields = model.get_fields()
-
-            # Determine index type based on store_type
-            index_type = IndexType.JSON if self.store_type == "json" else IndexType.HASH
-
-            # Create the index definition
-            definition = IndexDefinition(
-                prefix=[self.key_prefix], index_type=index_type
-            )
 
             # Create the index
             self.redis_client.ft(self.index_name).create_index(
@@ -160,7 +158,6 @@ class RedisIndexBuilder(IndexBuilder):
             )
         else:
             logger.info(f"Index {self.index_name} already exists. Skipping creation.")
-            return None
 
         return model
 
@@ -216,10 +213,10 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
         self,
         redis_url: str,
         embedding: Optional[Embeddings] = None,
-        index_name: str = "idx:doc_index",
+        index_name: str = "idx:docs",
         store_type: str = "json",
         key_prefix: str = "doc:",
-        counter_keyname: str = "doc_counter",
+        counter_keyname: str = "docs:counter",
         schema: Optional[Union[Dict[str, Any], str, os.PathLike]] = None,
         redis_username: Optional[str] = None,
         redis_password: Optional[str] = None,
@@ -287,7 +284,6 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
             key_prefix=self.key_prefix,
             store_type=self.store_type,
             schema=schema,
-            recreate_index=recreate_index,
         )
 
         self.key_manager = RedisKeyManager(
@@ -301,6 +297,10 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
         self._model = self.index_builder.build_index()
         if not isinstance(self.index_builder, RedisIndexBuilder):
             raise ValueError("IndexBuilder must be a RedisIndexBuilder or compatible.")
+
+    @property
+    def client(self) -> redis.Redis:
+        return self.redis_client
 
     @property
     def embedding_model(self) -> Optional[Embeddings]:
