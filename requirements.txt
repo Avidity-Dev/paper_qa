@@ -14,6 +14,7 @@ azure-storage-blob==12.24.0
 blinker==1.9.0
 boto3==1.35.36
 botocore==1.35.36
+cachetools==5.5.0
 certifi==2024.8.30
 cffi==1.17.1
 charset-normalizer==3.4.0
@@ -30,6 +31,13 @@ Flask==3.1.0
 Flask-Cors==5.0.0
 frozenlist==1.5.0
 fsspec==2024.10.0
+google-api-core==2.23.0
+google-auth==2.36.0
+google-cloud-core==2.4.1
+google-cloud-storage==2.19.0
+google-crc32c==1.6.0
+google-resumable-media==2.7.2
+googleapis-common-protos==1.66.0
 h11==0.14.0
 html2text==2024.2.26
 httpcore==1.0.7
@@ -71,10 +79,15 @@ packaging==24.2
 pandas==2.2.3
 paper-qa @ git+https://github.com/Future-House/paper-qa@cef9e2eef1c1c8b6470b7523958d2dbb282c85c0
 pinecone==5.4.1
-#pinecone-client>=5.0.1
-#pinecone-plugin-inference==2.0.0,<4.0.0
+pinecone-client==5.0.1
+pinecone-plugin-inference==3.0.0
+pinecone-plugin-interface==0.0.7
 pluggy==1.5.0
 propcache==0.2.0
+proto-plus==1.25.0
+protobuf==5.29.1
+pyasn1==0.6.1
+pyasn1_modules==0.4.1
 pybtex==0.24.0
 pycparser==2.22
 pydantic==2.10.0
@@ -97,6 +110,7 @@ requests==2.32.3
 requests-toolbelt==1.0.0
 rich==13.9.4
 rpds-py==0.21.0
+rsa==4.9
 s3transfer==0.10.4
 setuptools==75.6.0
 six==1.16.0
