@@ -79,9 +79,7 @@ packaging==24.2
 pandas==2.2.3
 paper-qa @ git+https://github.com/Future-House/paper-qa@cef9e2eef1c1c8b6470b7523958d2dbb282c85c0
 pinecone==5.4.1
-pinecone-client==5.0.1
 pinecone-plugin-inference==3.0.0
-pinecone-plugin-interface==0.0.7
 pluggy==1.5.0
 propcache==0.2.0
 proto-plus==1.25.0
