@@ -37,7 +37,7 @@ from src.models import PQADocument
 from src.process.metadata import (
     pqa_extract_publication_metadata,
     unpack_metadata,
-    pqa_build_mla,
+    enrich_metadata_list,
 )
 from src.storage.vector.converters import (
     LCVectorStorePipeline,
@@ -109,12 +109,13 @@ class PQADocumentProcessor:
         self._settings = pqa_settings
         self._vector_db = vector_db
 
-    async def build_doc(
+    async def chunk_and_embed(
         self, input: Union[os.PathLike, bytes, str, BytesIO]
-    ) -> PQADocument:
-        """Process a single document and return a BasicDoc object."""
+    ) -> tuple[list[str], list[float]]:
+        """Process a single document and return a tuple of chunks and embeddings."""
         try:
             chunks = self.chunk_pdf(input)
+            # Utilize paper-qa to retrieve general embeddings
             embedding_model = self._settings.get_embedding_model()
             embeddings = await embedding_model.embed_documents(chunks)
             # TODO: Extract metadata from the document
@@ -124,10 +125,7 @@ class PQADocumentProcessor:
             logger.error(f"Error building document: {str(e)}", exc_info=True)
             raise
 
-        return PQADocument(
-            text_chunks=chunks,
-            embeddings=embeddings,
-        )
+        return chunks, embeddings
 
     async def process_documents(
         self, input: List[Union[os.PathLike, bytes, str, BytesIO]]
@@ -142,8 +140,10 @@ class PQADocumentProcessor:
         """
         for _doc in input:
             try:
-                doc = await self.build_doc(_doc)
-                keys = self._vector_db.add_texts_and_embeddings([doc])
+                chunks, embeddings = await self.chunk_and_embed(_doc)
+                for chunk, embedding in zip(chunks, embeddings):
+                    metadata = await extract_metadata(chunk)
+
                 logger.info(f"Added document with keys: {keys}")
             except Exception as e:
                 logger.error(f"Error processing document {_doc}: {str(e)}\nSkipping...")
