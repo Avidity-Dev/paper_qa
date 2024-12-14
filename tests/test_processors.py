@@ -89,3 +89,21 @@ async def test_process_documents(docs_list_bytes: list[bytes]):
     keys = await processor.process_documents(docs_list_bytes)
     print(keys)
     assert len(keys) > 0
+    
+@pytest.mark.asyncio
+async def test_process_documents(docs_list_bytes: list[bytes]):
+    # Create mock for Redis vector store
+    mock_redis_store = MagicMock(spec=PQARedisVectorStore)
+    mock_redis_store.add_texts_and_embeddings.return_value = ["key1", "key2"]
+
+    mock_settings = MagicMock(spec=PQASettings)
+    
+    processor = PQAProcessor(mock_settings, mock_redis_store)
+    metadata_keys = ["meta_key1", "meta_key2"]
+    
+    keys = await processor.process_documents(docs_list_bytes, metadata_keys)
+    assert len(keys) > 0
+
+
+
+
