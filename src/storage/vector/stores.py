@@ -376,6 +376,13 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
         pipeline.execute()
         return keys
 
+    def get_embeddings(self, ids: list[str]) -> list[list[float]]:
+        embeddings = []
+        for id in ids:
+            embedding = self.redis_client.json().get(id, self._model.content_vector_key)
+            embeddings.append(embedding)
+        return embeddings
+
     def _run_knn_query(self, embedding: Union[bytes, list[float]], k: int):
         if isinstance(embedding, list):
             # Redis expects a byte representation

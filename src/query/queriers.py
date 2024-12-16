@@ -12,6 +12,7 @@ from paperqa.settings import ParsingSettings as PQAParsingSettings
 from paperqa.types import PQASession, Text as PQAText
 
 from src.models import PQADocument
+from src.storage.vector.stores import RedisVectorStore
 from src.storage.vector.stores.stores import VectorStore
 
 
@@ -39,7 +40,7 @@ class PQAQuerier:
 
     def __init__(
         self,
-        vector_db: VectorStore,
+        vector_db: RedisVectorStore,
         pqa_settings: PQASettings,
     ):
         self._vector_db = vector_db
