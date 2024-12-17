@@ -1,16 +1,36 @@
 import hashlib
 import mimetypes
 import os
+import sys
 from io import BytesIO
+import logging
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
 from src.storage.object.stores import CloudStorageFactory
+from src.query.queriers import PQAQuerier
+from src.storage.vector.stores import RedisVectorStore
+from paperqa.settings import Settings as PQASettings
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    stream=sys.stdout,
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
+
+# Initialize our Redis vector store and settings
+redis_vector_store = RedisVectorStore()  
+pqa_settings = PQASettings()  
+
+# Initialize the PQAQuerier
+pqa_querier = PQAQuerier(vector_db=redis_vector_store, pqa_settings=pqa_settings)
 
 storage_config = {
     "provider": "azure",
@@ -92,3 +112,22 @@ def upload_files():
     except Exception as e:
         logger.error(f"Upload error: {str(e)}")
         return jsonify({"error": "Internal server error during upload"}), 500
+
+@app.route("/api/v0.1/query", methods=["POST"])
+async def query():
+    """Query the document repository using PaperQA."""
+    query_text = request.json.get("query")
+    if not query_text:
+        return jsonify({'error': 'No query provided'}), 400
+
+    # Perform the query
+    session = await pqa_querier.query(query_text)
+    
+    # Access the LLM answer following paper-qa format
+    llm_answer = session.answer
+
+    # Return the session results
+    return jsonify({"answer": llm_answer})
+
+if __name__ == '__main__':
+    app.run(debug=True)
