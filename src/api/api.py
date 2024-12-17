@@ -1,4 +1,4 @@
 from . import create_app
-from .config import DevelopmentConfig
 
-app = create_app(DevelopmentConfig)
+# TODO: Add configuration to the app
+app = create_app()

@@ -4,15 +4,10 @@ text:
     no_stem: false
     sortable: false
     as_name: text
-  - name: $.name
-    weight: 1.0
-    no_stem: false
-    sortable: false
-    as_name: name
-  - name: $.dockey
+  - name: $.title
     weight: 1.0
     no_stem: true
-    as_name: dockey
+    as_name: title
   - name: $.doi
     weight: 1.0
     no_stem: true
@@ -33,17 +28,19 @@ text:
     weight: 1.0
     no_stem: true
     as_name: issue
-  - name: $.authors
-    weight: 1.0
-    no_stem: true
-
-numeric:
   - name: $.published_date
     sortable: true
     as_name: published_date
   - name: $.created_at
     sortable: true
     as_name: created_at
+tag:
+  - name: $.authors
+    weight: 1.0
+    no_index: false
+    as_name: authors
+    separator: ","
+
 
 vector:
   - name: $.embedding

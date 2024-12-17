@@ -50,8 +50,9 @@ class DocumentMetadata(BaseModel):
     title: str | None = None
     authors: list[str] | None = None
     doi: str | None = None
-    published_date: datetime | None = None
+    published_date: str | None = None
     citation: str | None = None
+    created_at: str | None = None
     journal: str | None = None
     volume: str | None = None
     issue: str | None = None

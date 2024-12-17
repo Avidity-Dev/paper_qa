@@ -2,7 +2,7 @@
 Document repository querying functionality.
 """
 
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from paperqa.docs import Docs as PQADocs
 from paperqa.settings import Settings as PQASettings
@@ -11,25 +11,11 @@ from paperqa.settings import PromptSettings as PQAPromptSettings
 from paperqa.settings import ParsingSettings as PQAParsingSettings
 from paperqa.types import PQASession, Text as PQAText
 
-from src.models import PQADocument
 from src.storage.vector.stores import RedisVectorStore
-from src.storage.vector.stores.stores import VectorStore
+from src.storage.vector.converters import LCVectorStorePipeline
 
-
-class Querier:
-    """Interface for querying the document repository."""
-
-    def __init__(self, vector_db: VectorStore, **kwargs):
-        """Initialize the querier."""
-        self._vector_db = vector_db
-
-    def query(self, query: str, **kwargs) -> Any:
-        """Query the document repository."""
-        raise NotImplementedError
-
-    def query_with_context(self, query: str, context: str, **kwargs) -> Any:
-        """Query the document repository with a context."""
-        raise NotImplementedError
+# TODO: Potentially add a base class for the querier to allow for more granular
+# functionality by subclasses
 
 
 class PQAQuerier:
@@ -40,10 +26,10 @@ class PQAQuerier:
 
     def __init__(
         self,
-        vector_db: RedisVectorStore,
+        vector_pipeline: LCVectorStorePipeline,
         pqa_settings: PQASettings,
     ):
-        self._vector_db = vector_db
+        self._vector_pipeline = vector_pipeline
         self._pqa_settings = pqa_settings
 
     @property
@@ -62,15 +48,22 @@ class PQAQuerier:
     def settings(self):
         return self._pqa_settings
 
-    async def mmr(self, query: str, **kwargs) -> Any:
-        return await self._vector_db.max_marginal_relevance_search(
+    @property
+    def vector_store(self):
+        return self._vector_pipeline.vector_store
+
+    async def mmr(
+        self, query: Union[str, list[float]], k: int = 10, fetch_k: int = 100, **kwargs
+    ) -> Any:
+        return await self._vector_pipeline.max_marginal_relevance_search(
             query,
-            k=kwargs.get("k", 10),
-            fetch_k=kwargs.get("fetch_k", 100),
+            k=k,
+            fetch_k=fetch_k,
             embedding_model=self.embedding_model,
+            **kwargs,
         )
 
-    async def query(self, query: str, **kwargs) -> PQASession:
+    async def query(self, query: Union[str, list[float]], **kwargs) -> PQASession:
         """
         Query the document repository.
 
@@ -94,14 +87,20 @@ class PQAQuerier:
         # Get the relevant chunks and return text objects and similarity scores
         relevant_text_objects, scores = await self.mmr(query, **kwargs)
 
+        # Check to if embeddings are present and retrieve them if not
+        if not relevant_text_objects[0].embedding:
+            embeddings = self.vector_store.get_embeddings(
+                [text.name for text in relevant_text_objects]
+            )
+            for text, embedding in zip(relevant_text_objects, embeddings):
+                text.embedding = embedding
+
         # Setup the initial pqa objects to use for querying
         # Inject the text objects into the docs object
         docs = PQADocs()
 
-        # Dummy doc for now
-        # TODO: Add the actual doc metadata that's parsed during processing
-        doc = PQADocument(dockey="", citation="", docname="")
-        await docs.aadd_texts(relevant_text_objects, doc=doc)
+        for text in relevant_text_objects:
+            await docs.aadd_texts(text, doc=text.doc)
 
         session = PQASession(question=query)
 

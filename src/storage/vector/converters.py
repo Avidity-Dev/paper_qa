@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod, abstractproperty
 from dataclasses import dataclass
+import hashlib
 import logging
 from enum import Enum, auto
 import sys
@@ -91,10 +92,14 @@ class LangChainPaperQAAdapter(DocumentAdapter[LCDocument, PQAText]):
 
     def convert(self, doc: LCDocument) -> PQAText:
         """Convert LangChain Document to PaperQA Text."""
+        # generate a dockey from name and citation hash
+        dockey = hashlib.sha256(
+            (doc.metadata.get("name", "") + doc.metadata.get("citation", "")).encode()
+        ).hexdigest()
         pqa_doc = PQADoc(
             docname=doc.metadata.get("name", doc.metadata.get("id", "")),
             citation=doc.metadata.get("citation", ""),
-            dockey=doc.metadata.get("id", ""),
+            dockey=dockey,
         )
 
         return PQAText(
@@ -267,3 +272,22 @@ class LCVectorStorePipeline(BaseVectorStorePipeline):
         """Ensure the vector store is set. If not set, cease execution."""
         if not self.vector_store:
             raise PipelineError("Vector store not set. Cannot continue execution.")
+
+    def max_marginal_relevance_search(
+        self, query: Union[str, list[float]], k: int, fetch_k: int, **kwargs: Any
+    ) -> List[Any]:
+        """Search vector store and convert results to target document type."""
+        self._ensure_vector_store()
+
+        # Get results from vector store as LangChain documents
+        results = self.vector_store.max_marginal_relevance_search(
+            query, k, fetch_k, **kwargs
+        )
+
+        # Convert results to target document type
+        conversion = self.adapter.batch_convert(results)
+        if conversion.failed:
+            for error in conversion.errors:
+                print(f"Warning: {error}")
+
+        return results

@@ -6,6 +6,7 @@ Custom readers extend the functionality of paper-qa, which is currently limited
 to ingesting files from the local filesystem.
 """
 
+from datetime import datetime
 import hashlib
 import uuid
 import warnings
@@ -29,11 +30,7 @@ from paperqa.types import ParsedText, ParsedMetadata, ChunkMetadata
 import pymupdf
 import tiktoken
 
-from src.storage.vector.stores import (
-    PQAPineconeVectorStore,
-    PQARedisVectorStore,
-    RedisVectorStore,
-)
+from src.storage.vector.stores import RedisVectorStore
 from src.models import DocumentMetadata, PQADocument
 from src.process.metadata import (
     pqa_build_mla,
@@ -433,6 +430,9 @@ class PQAProcessor:
                     metadata[0]["citation"] = await pqa_build_mla(
                         llm=self.llm, **metadata[0]
                     )
+
+                # Annotate creation of document
+                metadata[0]["created_at"] = str(datetime.now().isoformat())
                 metadatas = [metadata[0]] * len(chunks)
 
                 keys = await self.vector_store.add_texts(
