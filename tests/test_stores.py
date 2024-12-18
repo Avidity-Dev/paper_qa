@@ -11,10 +11,8 @@ from redis.commands.search.indexDefinition import IndexDefinition
 from src.models import PQADocument
 from src.storage.vector.keymanagers import RedisKeyManager
 from src.storage.vector.stores import (
-    PQARedisVectorStore,
     RedisVectorStore,
 )
-from src.config.config import INDEX_SCHEMA
 
 
 @pytest.fixture
@@ -94,3 +92,27 @@ async def test_add_texts(test_chunks: list[str], test_schema: dict):
     assert len(ids) == len(test_chunks)
     assert all(id.startswith("test:") for id in ids)
     local_vector_db.redis_client.execute_command("FLUSHALL")
+
+
+@pytest.mark.asyncio
+async def test_mmr_retrieval(test_chunks: list[str], test_schema: dict):
+    embedding = OpenAIEmbeddings(
+        model="text-embedding-3-small",
+        api_key=os.getenv("OPENAI_API_KEY"),
+    )
+    local_vector_db = RedisVectorStore(
+        redis_url="redis://localhost:6379",
+        index_name="idx:test",
+        key_prefix="test:",
+        counter_key="test_ctr",
+        embedding=embedding,
+        schema=test_schema,
+    )
+    await local_vector_db.add_texts(test_chunks)
+    query = "What are test chunks?"
+    embedded_query = embedding.embed_query(query)
+    results = local_vector_db.max_marginal_relevance_search(embedded_query)
+
+    assert len(results) > 0
+
+    RedisVectorStore.drop_index()

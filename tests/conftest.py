@@ -8,7 +8,7 @@ import pytest
 
 from src.config.config import INDEX_SCHEMA_PATH, ConfigurationManager, AppConfig
 from src.models import PQADocument
-from src.process.processors import PQADocumentProcessor
+from src.process.processors import PQAProcessor
 from src.storage.vector.stores import RedisVectorStore
 
 TEST_PDF_PATH = "tests/data/docs/"
@@ -32,6 +32,18 @@ def app_settings() -> AppConfig:
     config = ConfigurationManager()
     config.init_app_config(environment="local")
     return config.app_config
+
+
+@pytest.fixture
+def processor() -> PQAProcessor:
+    return PQAProcessor(
+        settings=PQASettings(
+            llm="claude-3-5-sonnet-20240620",
+            llm_config=local_llm_config,
+            summary_llm="claude-3-5-sonnet-20240620",
+            summary_llm_config=local_llm_config,
+        )
+    )
 
 
 # Hard coding index schema based off the model
@@ -75,16 +87,6 @@ def local_redis_vector_db(app_settings: AppConfig) -> RedisVectorStore:
 
 
 @pytest.fixture
-def pqa_settings() -> PQASettings:
-    return PQASettings(
-        llm="claude-3-5-sonnet-20240620",
-        llm_config=local_llm_config,
-        summary_llm="claude-3-5-sonnet-20240620",
-        summary_llm_config=local_llm_config,
-    )
-
-
-@pytest.fixture
 def docs_list_bytes() -> list[bytes]:
 
     # Get all the pdfs in the test directory
@@ -103,17 +105,8 @@ def docs_list_bytes() -> list[bytes]:
 def chunked_docs(docs_list_bytes: list[bytes]) -> list[list[str]]:
     chunked_docs = []
     for doc in docs_list_bytes:
-        chunked_docs.append(PQADocumentProcessor.chunk_pdf(doc))
+        chunked_docs.append(PQAProcessor.chunk_pdf(doc))
     return chunked_docs
-
-
-@pytest.fixture
-def doc_embeddings(chunked_docs: list[list[str]]) -> list[list[list[float]]]:
-    embeddings = OpenAIEmbeddings(
-        model="text-embedding-3-small",
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
-    return [embeddings.embed_documents(chunk) for chunk in chunked_docs]
 
 
 @pytest.fixture

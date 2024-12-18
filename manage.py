@@ -19,8 +19,6 @@ from src.config.config import (
     APP_CONFIG_PATH,
     STATIC_CONFIG_PATH,
 )
-from src.process.metadata import pqa_build_mla, pqa_extract_publication_metadata
-from src.process.processors import PQAProcessor
 from src.storage.vector.stores import RedisVectorStore, RedisIndexBuilder
 
 
@@ -38,13 +36,13 @@ class RedisManager:
             environment=environment
         )
 
-    def _get_redis_client(self) -> redis.Redis:
+    def get_redis_client(self) -> redis.Redis:
         return redis.Redis.from_url(self.app_config.vector_db_url)
 
     def create_index(
         self, config: Union[Dict[str, Any], os.PathLike[str]] = INDEX_SCHEMA_PATH
     ) -> None:
-        redis_client = self._get_redis_client()
+        redis_client = self.get_redis_client()
         index_builder = RedisIndexBuilder(
             redis_client=redis_client,
             index_name=self.app_config.index_name,
@@ -56,7 +54,7 @@ class RedisManager:
 
     def delete_index(self, index_name: str, drop_documents: bool = True) -> None:
         """Deletes a Redis index and all its documents."""
-        redis_client = self._get_redis_client()
+        redis_client = self.get_redis_client()
         drop_command = "DD" if drop_documents else ""
         try:
             redis_client.execute_command(f"FT.DROPINDEX {index_name} {drop_command}")
@@ -68,7 +66,7 @@ class RedisManager:
 
     def clear_documents(self, prefix: str) -> None:
         """Deletes all documents with the given prefix."""
-        redis_client = self._get_redis_client()
+        redis_client = self.get_redis_client()
         try:
             cursor = 0
             while True:
@@ -186,7 +184,7 @@ def delete_index(env: str, index: str, dd: bool):
     default="local",
     help="Environment to use (local, dev, prod)",
 )
-@click.option("--prefix", required=True, help="Document prefix to clear")
+@click.argument("prefix", type=click.STRING, required=True)
 def clear_documents(env: str, prefix: str):
     """
     Remove all documents with the specified key prefix from Redis.

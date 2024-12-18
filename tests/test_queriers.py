@@ -1,13 +1,19 @@
 import os
+from logging import getLogger
+from typing import Optional
+
+from langchain_openai import OpenAIEmbeddings
 import pytest
 
-from paperqa.settings import (
-    Settings as PQASettings,
-    AnswerSettings as PQAAnswerSettings,
-)
+from paperqa.settings import AnswerSettings, Settings
+from pydantic import BaseModel
 
+
+from manage import RedisManager
+from src.models import DocumentMetadata
 from src.query.queriers import PQAQuerier
-from src.storage.vector.stores import PQARedisVectorStore
+from src.storage.vector.stores import RedisVectorStore
+from src.storage.vector.converters import LCVectorStorePipeline, TextStorageType
 
 # TODO: Turn this into a fixture and refactor all tests that use this.
 local_llm_config = dict(
@@ -23,27 +29,51 @@ local_llm_config = dict(
     ]
 )
 
+logger = getLogger(__name__)
+
 
 @pytest.mark.asyncio
-async def test_pqa_querier():
-    pqa_vector_db = PQARedisVectorStore(redis_url="redis://localhost:6379")
-    # Setup the additional settings to avoid the call to the embedding processing and
-    # evidence retrieval call stack in paper-qa
-    answer_settings = PQAAnswerSettings(
+@pytest.mark.integration_test
+async def test_pqa_querier(
+    local_redis_vector_db: RedisVectorStore,
+):
+    # Setup the vector store and clear any existing documents
+    # TODO: Make the prefix dynamic
+
+    redis_manager = RedisManager()
+    logger.debug("Getting embedding service...")
+    embedding_service = OpenAIEmbeddings(
+        model="text-embedding-3-small",
+        api_key=os.getenv("OPENAI_API_KEY"),
+    )
+
+    vector_pipeline = LCVectorStorePipeline(
+        vector_store=local_redis_vector_db,
+        target_type=TextStorageType.PAPERQA,
+    )
+
+    answer_settings: AnswerSettings = AnswerSettings(
         evidence_retrieval=False,
         answer_max_sources=10,
         get_evidence_if_no_contexts=False,
     )
 
-    pqa_settings = PQASettings(
+    pqa_settings: Settings = Settings(
         llm="claude-3-5-sonnet-20240620",
         llm_config=local_llm_config,
         summary_llm="claude-3-5-sonnet-20240620",
         summary_llm_config=local_llm_config,
         answer=answer_settings,
     )
-    querier = PQAQuerier(pqa_vector_db, pqa_settings)
-    query = "What is the Transformer architecture?"
-    results = await querier.query(query)
-    print(results.answer)
+
+    querier = PQAQuerier(vector_pipeline=vector_pipeline, pqa_settings=pqa_settings)
+    queries = [
+        "What is the Transformer architecture?",
+        "How can RNA be delivered using antibodies?",
+    ]
+    for query in queries:
+        embedded_query = embedding_service.embed_query(query)
+        print(f"Embedded query: {embedded_query}, dims: {len(embedded_query)}")
+        results = await querier.query(query)
+        print(results.answer)
     assert results.answer is not None and isinstance(results.answer, str)

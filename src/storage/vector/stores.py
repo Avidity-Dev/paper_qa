@@ -135,10 +135,15 @@ class RedisIndexBuilder(IndexBuilder):
         # Need to extract the vector definition from the schema since the langchain
         # library expects the index definition and vector definitions to be passed
         # in separately.
-        model = RedisModel()
         schema = read_schema(self.schema)
         vector_schema = schema.pop("vector")[0]
+        content_key = schema.pop("content_key", "text")
+        content_vector_key = schema.pop("content_vector_key", "embedding")
+
+        model = RedisModel(**schema)
         model.add_vector_field(vector_schema)
+        model.content_key = content_key
+        model.content_vector_key = content_vector_key
         fields = model.get_fields()
 
         # Determine index type based on store_type
@@ -358,6 +363,7 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
 
                 for k, v in clean_meta.items():
                     doc_json[k] = v
+                logger.debug(f"Storing document: {doc_json}")
                 pipeline.json().set(doc_id, "$", doc_json)
             else:
                 # For hash, store each field as a separate key-value
@@ -376,20 +382,36 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
         pipeline.execute()
         return keys
 
-    def _run_knn_query(self, embedding: Union[bytes, list[float]], k: int):
-        if isinstance(embedding, list):
-            # Redis expects a byte representation
-            embedding = np.array(embedding, dtype=np.float32).tobytes()
+    def get_embeddings(self, ids: list[str]) -> list[list[float]]:
+        embeddings = []
+        for id in ids:
+            embedding = self.redis_client.json().get(id, self._model.content_vector_key)
+            embeddings.append(embedding)
+        return embeddings
 
+    def _run_knn_query(self, embedding: list[float], k: int):
+        embedding_bytes = np.array(embedding, dtype=np.float32).tobytes()
+
+        logger.debug(f"Running KNN query with {k} results...")
         vec_field = self._model.content_vector_key
+        logger.debug(f"Retrieved vector field: {vec_field}")
+        metadata_keys = [k for k in self._model.metadata_keys]
+        metadata_keys.remove(f"$.{self._model.content_vector_key}")
+        metadata_keys = [k.replace("$.", "") for k in metadata_keys]
+        logger.debug(f"Building query using metadata keys: {metadata_keys}")
         q = (
-            Query(f"*=>[KNN {k} @{vec_field} $vec_param AS score]")
+            Query(f"(*)=>[KNN {k} @{vec_field} $vec_param AS score]")
             .sort_by("score")
-            # Return the content field and all metadata fields
-            .return_fields(self._model.content_key, *self._model.metadata_keys, "score")
+            .return_fields(*metadata_keys, "score")
             .dialect(2)
         )
-        params_dict = {"vec_param": embedding}
+
+        logger.debug(f"Query string: {q.query_string()}")
+        params_dict = {"vec_param": embedding_bytes}
+        logger.debug(f"Executing query on index: {self.index_name}...")
+        # Inspect index definition
+        index_info = self.redis_client.ft(self.index_name).info()
+        logger.debug(f"Index definition: {index_info}")
         return self.redis_client.ft(self.index_name).search(q, query_params=params_dict)
 
     async def asimilarity_search_with_score(
@@ -492,13 +514,13 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
                 docs.append(d)
         return docs
 
-    def max_marginal_relevance_search(
+    async def max_marginal_relevance_search(
         self,
         query: Union[str, List[float]],
         k: int = 4,
         fetch_k: int = 20,
         lambda_mult: float = 0.5,
-        embedding_model: Optional[Embeddings] = None,
+        embedding_model: Optional[Union[Embeddings, pqa.EmbeddingModel]] = None,
         **kwargs: Any,
     ) -> List[Document]:
 
@@ -506,7 +528,11 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
         # embedding model, then an embedding model must be passed in the kwargs.
         try:
             if isinstance(query, str):
-                query_embedding = embedding_model.embed_query(query)
+                if isinstance(embedding_model, pqa.EmbeddingModel):
+                    query_embedding = await embedding_model.embed_documents([query])
+                    query_embedding = query_embedding[0]
+                else:
+                    query_embedding = embedding_model.embed_query(query)
             else:
                 query_embedding = query
         except:
@@ -516,16 +542,17 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
                 "provided in the kwargs."
             )
 
-        docs_with_scores = self.similarity_search_with_score(query, k=fetch_k, **kwargs)
+        docs_with_scores = self.similarity_search_with_score(
+            query_embedding, k=fetch_k, **kwargs
+        )
         if not docs_with_scores:
             return []
 
         docs = [d for d, _ in docs_with_scores]
 
         doc_texts = [d.page_content for d in docs]
-        doc_embeddings = np.array(
-            self._embeddings.embed_documents(doc_texts), dtype=np.float32
-        )
+        embedded_docs = await embedding_model.embed_documents(doc_texts)
+        doc_embeddings = np.array(embedded_docs, dtype=np.float32)
 
         def normalize(v):
             norm = np.linalg.norm(v)
@@ -603,457 +630,3 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
 def cosine_similarity(a, b):
     norm_product = np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1)
     return a @ b.T / norm_product
-
-
-class EmbeddingModes(StrEnum):
-    DOCUMENT = "document"
-    QUERY = "query"
-
-
-class PQAPineconeVectorStore(PQAVectorStore, BaseModel):
-    """
-    Implementation of the paper-qa VectorStore interface for use with an external
-    Pinecone vector database.
-    """
-
-    model_config = {"arbitrary_types_allowed": True}
-
-    pc: Pinecone = None
-    index: any = None
-    texts: list[PQAEmbeddable] = []  # Keep track of texts just like NumpyVectorStore
-    mmr_lambda: float = 0.9  # Default value matching paperqa
-
-    def __init__(self, index_name: str, api_key: str, environment: str):
-        """Initialize PineconeVectorStore.
-
-        Args:
-            index_name: Name of the Pinecone index
-            api_key: Pinecone API key
-            environment: Pinecone environment
-        """
-        super(BaseModel, self).__init__()
-        super(PQAVectorStore, self).__init__()
-        self.pc = Pinecone(api_key=api_key)
-        self.index = self.pc.Index(index_name)
-        self.texts = []
-        logger.info(f"Initialized PineconeVectorStore with index: {index_name}")
-
-    def __eq__(self, other) -> bool:
-        """Implement equality comparison like NumpyVectorStore."""
-        if not isinstance(other, type(self)):
-            return NotImplemented
-        return (
-            self.texts == other.texts
-            and self.texts_hashes == other.texts_hashes
-            and self.mmr_lambda == other.mmr_lambda
-        )
-
-    def add_texts_and_embeddings(self, texts: Iterable[PQAEmbeddable]) -> None:
-        """Add texts and their embeddings to Pinecone."""
-        super().add_texts_and_embeddings(texts)  # Update texts_hashes
-        texts_list = list(texts)
-        self.texts.extend(texts_list)  # Keep local record of texts
-
-        logger.info(f"Adding {len(texts_list)} texts to Pinecone")
-
-        # Prepare vectors for Pinecone
-        upserts = []
-        for text in texts_list:
-            if text.embedding is None:
-                logger.warning(f"Text {text.name} has no embedding!")
-                continue
-
-            # Convert embedding to list if it's numpy array
-            embedding = (
-                text.embedding.tolist()
-                if hasattr(text.embedding, "tolist")
-                else text.embedding
-            )
-
-            upserts.append(
-                {
-                    "id": text.name,
-                    "values": embedding,
-                    "metadata": {"text": text.text, "name": text.name},
-                }
-            )
-
-        if upserts:
-            try:
-                self.index.upsert(vectors=upserts)
-                logger.info(f"Successfully upserted {len(upserts)} vectors to Pinecone")
-            except Exception as e:
-                logger.error(f"Failed to upsert vectors: {str(e)}")
-                raise
-
-    async def similarity_search(
-        self, query: str, k: int, embedding_model: PQAEmbeddingModel
-    ) -> tuple[Sequence[PQAEmbeddable], list[float]]:
-        logger.info(f"Starting similarity search for query: {query[:50]}...")
-
-        k = min(k, len(self.texts))
-        if k == 0:
-            logger.info("No texts to search through")
-            return [], []
-
-        try:
-            # Get query embedding
-            embedding_model.set_mode(EmbeddingModes.QUERY)
-            query_embedding = (await embedding_model.embed_documents([query]))[0]
-            embedding_model.set_mode(EmbeddingModes.DOCUMENT)
-            logger.info("Generated query embedding")
-
-            # Convert to list if it's numpy array
-            if hasattr(query_embedding, "tolist"):
-                query_embedding = query_embedding.tolist()
-
-            # Use Pinecone's native query
-            query_response = self.index.query(
-                vector=query_embedding, top_k=k, include_metadata=True
-            )
-
-            matches = query_response.matches
-            logger.info(f"Found {len(matches)} matches in Pinecone")
-
-            # Convert Pinecone results to Embeddable objects
-            results = []
-            scores = []
-
-            for match in matches:
-                # Find the original document in self.texts
-                original_doc = next(
-                    t for t in self.texts if t.name == match.metadata["name"]
-                )
-
-                # Create new Text object (which extends Embeddable)
-                text_obj = PQAText(
-                    text=match.metadata["text"],
-                    name=match.metadata["name"],
-                    embedding=original_doc.embedding,
-                    doc=original_doc.doc,  # This should now work since we're using Text instead of Embeddable
-                )
-                results.append(text_obj)
-                scores.append(match.score)
-
-            logger.info(f"Returning {len(results)} results")
-            logger.info(f"Top similarity scores: {scores[:3] if scores else []}")
-
-            return results, scores
-
-        except Exception as e:
-            logger.error(f"Error in similarity search: {str(e)}", exc_info=True)
-            return [], []
-
-    async def max_marginal_relevance_search(
-        self, query: str, k: int, fetch_k: int, embedding_model: PQAEmbeddingModel
-    ) -> tuple[Sequence[PQAEmbeddable], list[float]]:
-        """Implement MMR search using parent VectorStore's implementation.
-
-        Args:
-            query: Query string
-            k: Number of results to return
-            fetch_k: Number of results to fetch before MMR
-            embedding_model: Model to use for embedding the query
-
-        Returns:
-            Tuple of (list of Embeddable results, list of similarity scores)
-        """
-        logger.info(f"Starting MMR search with k={k}, fetch_k={fetch_k}")
-
-        if fetch_k < k:
-            logger.warning(
-                f"fetch_k ({fetch_k}) must be >= k ({k}), adjusting fetch_k to {k}"
-            )
-            fetch_k = k
-
-        # Use parent implementation which relies on our similarity_search
-        return await super().max_marginal_relevance_search(
-            query, k, fetch_k, embedding_model
-        )
-
-    def clear(self) -> None:
-        """Clear all data from the store."""
-        try:
-            self.index.delete(delete_all=True)
-            self.texts.clear()
-            super().clear()  # Clear the base class's texts_hashes set
-            logger.info("Successfully cleared all texts and embeddings")
-        except Exception as e:
-            logger.error(f"Error clearing store: {e}")
-            raise
-
-
-class PQARedisVectorStore:
-    """
-    Provides functionality for storing and querying documents in a Redis vector
-    database, using paper-qa objects for interaction.
-    """
-
-    redis_client: redis.Redis = None
-    redis_url: str = None
-    index_name: str = "idx:doc_chunks_v1"
-    key_prefix: str = "doc_chunks:"
-    counter_key: str = "doc_chunks_ctr"
-    mmr_lambda: float = 0.9
-    vector_dim: int = 1536
-    distance_metric: str = "COSINE"
-    index_schema: list[Field] = None
-    index_type: IndexType = IndexType.JSON
-    embedding_model: PQAEmbeddingModel = OpenAIEmbeddings(
-        model="text-embedding-3-small",
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
-    key_manager: KeyManager = None
-
-    DEFAULT_INDEX_SCHEMA: list[Field] = [
-        TextField("$.text", no_stem=True, as_name="text"),
-        TextField("$.name", no_stem=True, as_name="name"),
-        VectorField(
-            "$.embedding",
-            "FLAT",
-            {
-                "TYPE": "FLOAT32",
-                "DIM": 1536,
-                "DISTANCE_METRIC": "COSINE",
-            },
-            as_name="embedding",
-        ),
-    ]
-
-    def __init__(
-        self,
-        redis_url: str,
-        key_prefix: str = "doc_chunks:",
-        index_schema: list[Field] = DEFAULT_INDEX_SCHEMA,
-    ):
-        """Initialize RedisVectorStore.
-
-        Parameters
-        ----------
-        redis_url : str
-            Redis connection URL
-        index_name : str
-            Name of the Redis index
-        vector_dim : int, optional
-            Dimension of embedding vectors, by default 1536
-        distance_metric : str, optional
-            Distance metric for vector similarity, by default "COSINE"
-        index_definition : Optional[IndexDefinition], optional
-            Custom index definition, by default None
-        """
-        self.redis_url = redis_url
-        self.index_schema = index_schema
-        self._index_definition = IndexDefinition(
-            prefix=[key_prefix], index_type=self.index_type
-        )
-        self.redis_client = redis.from_url(self.redis_url)
-
-        self.key_manager = RedisKeyManager(
-            redis_client=self.redis_client,
-            index_name=self.index_name,
-            key_prefix=self.key_prefix,
-            counter_key=self.counter_key,
-        )
-
-    @property
-    def index_definition(self) -> IndexDefinition:
-        return self._index_definition
-
-    def create_index(
-        self,
-        index_name: str,
-        index_definition: IndexDefinition,
-        index_schema: list[Field],
-    ) -> None:
-        """Create a Redis index with a dynamic schema if it doesn't exist.
-
-        Parameters
-        ----------
-        index_name : str
-            Name of the Redis index
-        vector_dim : int
-            Dimension of embedding vectors
-        distance_metric : str, optional
-            Distance metric for vector similarity, by default "COSINE"
-        index_definition : Optional[IndexDefinition], optional
-            Custom index definition, by default None
-
-        Notes
-        -----
-        If no custom index definition is provided, a default schema including all
-        fields from the Document model is used.
-        """
-        try:
-            self.redis_client.ft(index_name).create_index(
-                fields=index_schema,
-                definition=index_definition,
-            )
-            logger.info(
-                f"Successfully created index '{index_name}' with {index_schema} fields"
-            )
-
-        # Just inform the user if the index already exists, no need to raise an error
-        except redis.exceptions.ResponseError as e:
-            if "Index already exists" in str(e):
-                logger.warning(f"Index '{index_name}' already exists")
-
-        except Exception as e:
-            logger.error(f"Unexpected error creating index: {str(e)}")
-            raise
-
-    def add_texts_and_embeddings(self, docs: Iterable[PQADocument]) -> list[str]:
-        """Add texts and their embeddings for each document in the iterable.
-
-        Returns:
-            List of keys for the added documents.
-        """
-        docs_list = list(docs)
-        keys = []
-
-        # logger.info(f"Adding {len(docs_list)} texts to Redis")
-
-        pipeline = self.redis_client.pipeline(transaction=False)
-
-        for doc in docs_list:
-            for i, text in enumerate(doc.text_chunks):
-                key = self.key_manager.get_next_key()
-                keys.append(key)
-
-                # Add the document ID and DocKey.
-                # These are the same for now, but we may want to change this in the future.
-                doc.id = key
-                doc.dockey = key
-
-                json_doc = {
-                    "text": text,
-                    "name": key,
-                    "embedding": np.array(doc.embeddings[i], dtype=np.float32).tolist(),
-                }
-
-                pipeline.json().set(key, "$", json_doc)
-
-        try:
-            pipeline.execute()
-            logger.info(f"Successfully added vectors to Redis")
-            return keys
-        except Exception as e:
-            logger.error(f"Failed to add vectors: {str(e)}")
-            raise
-
-    async def similarity_search(
-        self, query: str, k: int, embedding_model: PQAEmbeddingModel
-    ) -> tuple[Sequence[PQAEmbeddable], list[float]]:
-        """Perform similarity search using Redis."""
-        logger.info(f"Starting similarity search for query: {query[:50]}...")
-
-        try:
-            # Get query embedding
-            embedding_model.set_mode(EmbeddingModes.QUERY)
-            query_embedding = (await embedding_model.embed_documents([query]))[0]
-            embedding_model.set_mode(EmbeddingModes.DOCUMENT)
-
-            # Convert to numpy array and then to list
-            query_vector = np.array(query_embedding, dtype=np.float32).tobytes()
-
-            # Construct Redis vector similarity query
-            q = (
-                Query(f"*=>[KNN {k} @embedding $query_vector AS score]")
-                .sort_by("score")
-                .return_fields("text", "name", "score")
-                .dialect(2)
-            )
-
-            # Execute search
-            results = self.redis_client.ft(self.index_name).search(
-                q, query_params={"query_vector": query_vector}
-            )
-
-            # Process results
-            matches = []
-            scores = []
-
-            for doc in results.docs:
-                # Get the original embedding
-                embedding = self.redis_client.json().get(doc.id, "$.embedding")[0]
-                text_obj = PQAText(
-                    text=doc.text,
-                    name=doc.name,
-                    doc=PQADocument(
-                        id=doc.name,
-                        dockey="",
-                        citation="",
-                    ),
-                    embedding=embedding,
-                )
-                matches.append(text_obj)
-                scores.append(float(doc.score))
-
-            logger.info(f"Returning {len(matches)} results")
-            logger.info(f"Top similarity scores: {scores[:3] if scores else []}")
-
-            return matches, scores
-
-        except Exception as e:
-            logger.error(f"Error in similarity search: {str(e)}", exc_info=True)
-            return [], []
-
-    async def max_marginal_relevance_search(
-        self, query: str, k: int, fetch_k: int, embedding_model: PQAEmbeddingModel
-    ) -> tuple[Sequence[PQAText], list[float]]:
-        """Vectorized implementation of Maximal Marginal Relevance (MMR) search.
-
-        Args:
-            query: Query vector.
-            k: Number of results to return.
-            fetch_k: Number of results to fetch from the vector store.
-            embedding_model: model used to embed the query
-
-        Returns:
-            List of tuples (doc, score) of length k.
-        """
-        if fetch_k < k:
-            raise ValueError("fetch_k must be greater or equal to k")
-
-        texts, scores = await self.similarity_search(query, fetch_k, embedding_model)
-        if len(texts) <= k or self.mmr_lambda >= 1.0:
-            return texts, scores
-
-        embeddings = np.array([t.embedding for t in texts])
-        np_scores = np.array(scores)
-        similarity_matrix = cosine_similarity(embeddings, embeddings)
-
-        selected_indices = [0]
-        remaining_indices = list(range(1, len(texts)))
-
-        while len(selected_indices) < k:
-            selected_similarities = similarity_matrix[:, selected_indices]
-            max_sim_to_selected = selected_similarities.max(axis=1)
-
-            mmr_scores = (
-                self.mmr_lambda * np_scores
-                - (1 - self.mmr_lambda) * max_sim_to_selected
-            )
-            mmr_scores[selected_indices] = -np.inf  # Exclude already selected documents
-
-            max_mmr_index = mmr_scores.argmax()
-            selected_indices.append(max_mmr_index)
-            remaining_indices.remove(max_mmr_index)
-
-        return [texts[i] for i in selected_indices], [
-            scores[i] for i in selected_indices
-        ]
-
-    def clear(self) -> None:
-        """Clear all data from the store but keep the index."""
-        try:
-            # Delete all keys with the index prefix
-            keys = self.redis_client.keys(f"{self.index_name}:*")
-            if keys:
-                self.redis_client.delete(*keys)
-
-            self.texts.clear()
-            super().clear()
-            logger.info("Successfully cleared all texts and embeddings")
-        except Exception as e:
-            logger.error(f"Error clearing store: {e}")
-            raise
