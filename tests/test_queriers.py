@@ -36,7 +36,6 @@ logger = getLogger(__name__)
 @pytest.mark.integration_test
 async def test_pqa_querier(
     local_redis_vector_db: RedisVectorStore,
-    chunked_docs: list[list[str]],
 ):
     # Setup the vector store and clear any existing documents
     # TODO: Make the prefix dynamic
@@ -47,37 +46,6 @@ async def test_pqa_querier(
         model="text-embedding-3-small",
         api_key=os.getenv("OPENAI_API_KEY"),
     )
-    logger.debug("Generating embeddings...")
-    doc_embeddings = []
-    for paper in chunked_docs:
-        logger.debug(f"Embedding document with shape: {len(paper)}")
-        embeddings = embedding_service.embed_documents(paper)
-        doc_embeddings.append(embeddings)
-
-    logger.debug("Embeddings generated")
-    logger.debug("Clearing vector store...")
-
-    metadata = {
-        "title": "test title 1",
-        "authors": ["test authors 1", "test authors 2"],
-        "doi": "test doi 1",
-        "published_date": "2024-01-01",
-        "created_at": "2024-01-01",
-        "citation": "test citation 1",
-        "journal": "test journal 1",
-        "volume": "1",
-        "issue": "1",
-    }
-    # Add the test documents to the vector store
-    # We don't care about metadata so make dummy metadata
-    logger.debug("Adding documents to vector store...")
-    for doc, embeddings in zip(chunked_docs, doc_embeddings):
-        metadata_list = [metadata] * len(doc)
-        await local_redis_vector_db.add_texts(
-            texts=doc,
-            embeddings=embeddings,
-            metadatas=metadata_list,
-        )
 
     vector_pipeline = LCVectorStorePipeline(
         vector_store=local_redis_vector_db,
@@ -99,12 +67,13 @@ async def test_pqa_querier(
     )
 
     querier = PQAQuerier(vector_pipeline=vector_pipeline, pqa_settings=pqa_settings)
-    query = "What is the Transformer architecture?"
-    embedded_query = embedding_service.embed_query(query)
-    logger.debug(f"Embedded query: {embedded_query}, dims: {len(embedded_query)}")
-    results = await querier.query(embedded_query)
-    print(results.answer)
+    queries = [
+        "What is the Transformer architecture?",
+        "How can RNA be delivered using antibodies?",
+    ]
+    for query in queries:
+        embedded_query = embedding_service.embed_query(query)
+        print(f"Embedded query: {embedded_query}, dims: {len(embedded_query)}")
+        results = await querier.query(query)
+        print(results.answer)
     assert results.answer is not None and isinstance(results.answer, str)
-
-    # Clean up the vector store
-    redis_manager.clear_documents(prefix="docs:")

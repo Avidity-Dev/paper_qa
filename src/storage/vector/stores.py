@@ -137,8 +137,8 @@ class RedisIndexBuilder(IndexBuilder):
         # in separately.
         schema = read_schema(self.schema)
         vector_schema = schema.pop("vector")[0]
-        content_key = schema.pop("content_key")
-        content_vector_key = schema.pop("content_vector_key")
+        content_key = schema.pop("content_key", "text")
+        content_vector_key = schema.pop("content_vector_key", "embedding")
 
         model = RedisModel(**schema)
         model.add_vector_field(vector_schema)
@@ -390,29 +390,28 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
         return embeddings
 
     def _run_knn_query(self, embedding: list[float], k: int):
-        if isinstance(embedding, list):
-            # Redis expects a byte representation
-            embedding = np.array(embedding, dtype=np.float32).tobytes()
+        embedding_bytes = np.array(embedding, dtype=np.float32).tobytes()
 
         logger.debug(f"Running KNN query with {k} results...")
         vec_field = self._model.content_vector_key
         logger.debug(f"Retrieved vector field: {vec_field}")
         metadata_keys = [k for k in self._model.metadata_keys]
-        split_keys = [k.split(".")[1] for k in metadata_keys]
-        split_keys.remove(vec_field)
-
-        logger.debug(f"Building query using metadata keys: {split_keys}")
+        metadata_keys.remove(f"$.{self._model.content_vector_key}")
+        metadata_keys = [k.replace("$.", "") for k in metadata_keys]
+        logger.debug(f"Building query using metadata keys: {metadata_keys}")
         q = (
             Query(f"(*)=>[KNN {k} @{vec_field} $vec_param AS score]")
             .sort_by("score")
-            .return_fields(*split_keys, "score")
+            .return_fields(*metadata_keys, "score")
             .dialect(2)
         )
 
         logger.debug(f"Query string: {q.query_string()}")
-        params_dict = {"vec_param": embedding}
-        logger.debug(f"Params: {params_dict}")
+        params_dict = {"vec_param": embedding_bytes}
         logger.debug(f"Executing query on index: {self.index_name}...")
+        # Inspect index definition
+        index_info = self.redis_client.ft(self.index_name).info()
+        logger.debug(f"Index definition: {index_info}")
         return self.redis_client.ft(self.index_name).search(q, query_params=params_dict)
 
     async def asimilarity_search_with_score(
@@ -515,13 +514,13 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
                 docs.append(d)
         return docs
 
-    def max_marginal_relevance_search(
+    async def max_marginal_relevance_search(
         self,
         query: Union[str, List[float]],
         k: int = 4,
         fetch_k: int = 20,
         lambda_mult: float = 0.5,
-        embedding_model: Optional[Embeddings] = None,
+        embedding_model: Optional[Union[Embeddings, pqa.EmbeddingModel]] = None,
         **kwargs: Any,
     ) -> List[Document]:
 
@@ -529,7 +528,11 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
         # embedding model, then an embedding model must be passed in the kwargs.
         try:
             if isinstance(query, str):
-                query_embedding = embedding_model.embed_query(query)
+                if isinstance(embedding_model, pqa.EmbeddingModel):
+                    query_embedding = await embedding_model.embed_documents([query])
+                    query_embedding = query_embedding[0]
+                else:
+                    query_embedding = embedding_model.embed_query(query)
             else:
                 query_embedding = query
         except:
@@ -548,9 +551,8 @@ class RedisVectorStore(LCVectorStore, BaseVectorStore):
         docs = [d for d, _ in docs_with_scores]
 
         doc_texts = [d.page_content for d in docs]
-        doc_embeddings = np.array(
-            self._embeddings.embed_documents(doc_texts), dtype=np.float32
-        )
+        embedded_docs = await embedding_model.embed_documents(doc_texts)
+        doc_embeddings = np.array(embedded_docs, dtype=np.float32)
 
         def normalize(v):
             norm = np.linalg.norm(v)

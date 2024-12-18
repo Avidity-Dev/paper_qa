@@ -93,6 +93,7 @@ class LangChainPaperQAAdapter(DocumentAdapter[LCDocument, PQAText]):
     def convert(self, doc: LCDocument) -> PQAText:
         """Convert LangChain Document to PaperQA Text."""
         # generate a dockey from name and citation hash
+        print(f"Converting LangChain Document to PaperQA Text: {doc.metadata}")
         dockey = hashlib.sha256(
             (doc.metadata.get("name", "") + doc.metadata.get("citation", "")).encode()
         ).hexdigest()
@@ -104,7 +105,7 @@ class LangChainPaperQAAdapter(DocumentAdapter[LCDocument, PQAText]):
 
         return PQAText(
             text=doc.page_content,
-            name=doc.metadata.get("name", doc.metadata.get("id", "")),
+            name=doc.metadata.get("citation", "no citation"),
             doc=pqa_doc,
             embedding=doc.metadata.get("embedding", None),
         )
@@ -273,21 +274,26 @@ class LCVectorStorePipeline(BaseVectorStorePipeline):
         if not self.vector_store:
             raise PipelineError("Vector store not set. Cannot continue execution.")
 
-    def max_marginal_relevance_search(
+    async def max_marginal_relevance_search(
         self, query: Union[str, list[float]], k: int, fetch_k: int, **kwargs: Any
     ) -> List[Any]:
         """Search vector store and convert results to target document type."""
         self._ensure_vector_store()
 
         # Get results from vector store as LangChain documents
-        results = self.vector_store.max_marginal_relevance_search(
+        results = await self.vector_store.max_marginal_relevance_search(
             query, k, fetch_k, **kwargs
         )
 
-        # Convert results to target document type
-        conversion = self.adapter.batch_convert(results)
-        if conversion.failed:
-            for error in conversion.errors:
-                print(f"Warning: {error}")
+        # Convert results to target document type if needed
+        if self.target_type != TextStorageType.LANGCHAIN:
+            conversion = self.adapter.batch_convert(results)
+            if conversion.failed:
+                for error in conversion.errors:
+                    print(f"Warning: {error}")
 
-        return results
+        return (
+            results
+            if self.target_type == TextStorageType.LANGCHAIN
+            else conversion.successful
+        )

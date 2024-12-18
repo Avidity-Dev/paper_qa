@@ -4,7 +4,9 @@ Document repository querying functionality.
 
 from typing import Any, Optional, Union
 
-from paperqa.docs import Docs as PQADocs
+from langchain_core.embeddings import Embeddings
+from paperqa import EmbeddingModel
+from paperqa.docs import Docs as PQADocs, Doc as PQADoc
 from paperqa.settings import Settings as PQASettings
 from paperqa.settings import AnswerSettings as PQAAnswerSettings
 from paperqa.settings import PromptSettings as PQAPromptSettings
@@ -52,10 +54,15 @@ class PQAQuerier:
     def vector_store(self):
         return self._vector_pipeline.vector_store
 
-    async def mmr(
-        self, query: Union[str, list[float]], k: int = 10, fetch_k: int = 100, **kwargs
+    def mmr(
+        self,
+        query: Union[str, list[float]],
+        k: int = 10,
+        fetch_k: int = 15,
+        embedding_model: Optional[EmbeddingModel] = None,
+        **kwargs,
     ) -> Any:
-        return await self._vector_pipeline.max_marginal_relevance_search(
+        return self._vector_pipeline.max_marginal_relevance_search(
             query,
             k=k,
             fetch_k=fetch_k,
@@ -63,7 +70,7 @@ class PQAQuerier:
             **kwargs,
         )
 
-    async def query(self, query: Union[str, list[float]], **kwargs) -> PQASession:
+    async def query(self, query: str, **kwargs) -> PQASession:
         """
         Query the document repository.
 
@@ -82,25 +89,31 @@ class PQAQuerier:
             _description_
         """
         session: PQASession
-        relevant_text_objects: list[PQAText]
+        relevant_docs: list[PQAText]
 
         # Get the relevant chunks and return text objects and similarity scores
-        relevant_text_objects, scores = await self.mmr(query, **kwargs)
+        relevant_docs = await self.mmr(
+            query, **kwargs, embedding_model=self.embedding_model
+        )
 
         # Check to if embeddings are present and retrieve them if not
-        if not relevant_text_objects[0].embedding:
-            embeddings = self.vector_store.get_embeddings(
-                [text.name for text in relevant_text_objects]
-            )
-            for text, embedding in zip(relevant_text_objects, embeddings):
-                text.embedding = embedding
+        embeddings = self.vector_store.get_embeddings(
+            [doc.name for doc in relevant_docs]
+        )
+        unique_docs: dict[str, tuple[PQADoc, list[PQAText]]] = {}
+        for doc, embedding in zip(relevant_docs, embeddings):
+            doc.embedding = embedding
+            if doc.doc.dockey not in unique_docs.keys():
+                unique_docs[doc.doc.dockey] = (doc.doc, [])
+
+            unique_docs[doc.doc.dockey][1].append(doc)
 
         # Setup the initial pqa objects to use for querying
         # Inject the text objects into the docs object
         docs = PQADocs()
 
-        for text in relevant_text_objects:
-            await docs.aadd_texts(text, doc=text.doc)
+        for doc, texts in unique_docs.values():
+            await docs.aadd_texts(texts, doc=doc)
 
         session = PQASession(question=query)
 
